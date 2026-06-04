@@ -1,0 +1,39 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300..900;1,300..900&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&family=Space+Grotesk:wght@300..700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Custom scrollbars and styling for the luxury stationery aesthetic */
+::selection {
+  background-color: rgba(212, 175, 55, 0.22);
+  color: #1d1d1f;
+}
+
+/* Custom styles for writing workspace */
+textarea:focus {
+  outline: none;
+}
+
+/* Custom gold slider override styles */
+input[type="range"] {
+  accent-color: #d4af37;
+}
+
+/* Animation presets for high mechanical key fidelity */
+@keyframes goldRipple {
+  0% {
+    box-shadow: 0 0 0 0 rgba(212, 175, 55, 0.4);
+  }
+  100% {
+    box-shadow: 0 0 0 12px rgba(212, 175, 55, 0);
+  }
+}
+
+.animate-gold-ripple {
+  animation: goldRipple 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
