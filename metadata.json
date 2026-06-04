@@ -1,0 +1,6 @@
+{
+  "name": "NoteOli",
+  "description": "A high-speed offline-first text processing terminal mimicking organic stationer aesthetics, with local macro presets and highly secure sandboxed AI transformations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
