@@ -1,0 +1,40 @@
+@import url('https://fonts.googleapis.com/css2?family=Comfortaa:wght@300..700&family=Source+Sans+Pro:ital,wght@0,300..900;1,300..900&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Source Sans Pro", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Comfortaa", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Custom scrollbars and styling for the cozy productivity aesthetic */
+::selection {
+  background-color: rgba(216, 140, 110, 0.22);
+  color: #1d1d1f;
+}
+
+/* Custom styles for writing workspace */
+textarea:focus {
+  outline: none;
+}
+
+/* Custom warm cozy slider override styles */
+input[type="range"] {
+  accent-color: #d88c6e;
+}
+
+/* Cozy animations for smooth interactions */
+@keyframes warmRipple {
+  0% {
+    box-shadow: 0 0 0 0 rgba(216, 140, 110, 0.4);
+  }
+  100% {
+    box-shadow: 0 0 0 12px rgba(216, 140, 110, 0);
+  }
+}
+
+.animate-gold-ripple {
+  animation: warmRipple 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+
