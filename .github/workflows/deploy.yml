@@ -1,0 +1,36 @@
+# Automated workflow to compile NoteOli and deploy to GitHub Pages without a terminal
+name: Deploy NoteOli to GitHub Pages
+
+on:
+  push:
+    branches: ["main"] # Automatically runs every time you commit changes to the main branch
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-deploy:
+    concurrency: ci-${{ github.ref }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Project Dependencies
+        run: npm ci
+
+      - name: Compile Vite Production Build
+        run: npm run build
+
+      - name: Deploy Compiled Static Assets to gh-pages Branch
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: dist # Pushes your optimized build output folder online
+          branch: gh-pages # Target branch for GitHub Pages hosting
+          
