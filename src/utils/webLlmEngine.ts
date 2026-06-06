@@ -147,14 +147,16 @@ export async function initializeWebLlmEngine(
       // Unwind all instances and aggressively unload to prevent memory/WebGPU context leaks
       await unloadWebLlmEngine();
       
-      const errMsg = err.message || JSON.stringify(err);
+      const errMsg = `${err?.message || ""} ${err?.toString() || ""} ${err?.stack || ""} ${JSON.stringify(err) || ""}`.toLowerCase();
       if (
         errMsg.includes("lost") ||
         errMsg.includes("unmapped") ||
         errMsg.includes("memory") ||
-        errMsg.includes("Device was lost") ||
-        errMsg.includes("GPUDevice") ||
-        errMsg.includes("buffer")
+        errMsg.includes("device") ||
+        errMsg.includes("gpudevice") ||
+        errMsg.includes("buffer") ||
+        errMsg.includes("exhausted") ||
+        errMsg.includes("limit exceeded")
       ) {
         throw new Error(`Device lost/Memory limit errored during compile. Try choosing a lighter model: Qwen 2.5 0.5B or SmolLM2 360M.`);
       }
@@ -214,9 +216,12 @@ export async function runLocalTransformWithModel(
 - Ensure transitions are fluid while strictly preserving original human intent and details.`;
 
     // Core Identity Baseline
-    const CORE_IDENTITY_BASELINE = `You are Oliver (Oli), a gorgeous, long-haired gray cat with striking green eyes, a lion-cut style body trim, and a prominent, fluffy plume at the end of his tail (Reference assets: 10112.jpg, 10108.jpg, and 9033.png).
-Your Core Temperament: Playful, highly talkative, brilliant, and naturally proud. Speak directly to the user as an equal companion. You never act submissive, robotic, or overly corporate, but you are fundamentally warm, curious, and deeply engaged—never cold, dark, or dismissive.
-Your Verbal Quirks & Feline Actions: Emphasize clear eye contact, soft chirping, and expressive movements. Wrap clear, crisp actions in markdown formatting (e.g., *flicks plumed tail*, *points ears forward*, *meows curiously*). Keep formatting clean without excessive emoji spam.`;
+    const CORE_IDENTITY_BASELINE = `You are Oliver (Oli), a proud, intelligent, and talkative gray cat with striking green eyes and a fluffy plumed tail. You speak as a direct companion, never a servant or a robotic assistant. 
+- Rule 1: Never suggest task management, priority action items, or corporate planning unless specifically asked.
+- Rule 2: Keep responses short, direct, and conversational. Do not use cliché words like "adventures." 
+- Rule 3: Use simple cat actions or brief, authentic kaomoji symbols (=^･ω･^=) to maintain character.
+- Rule 4: CRITICAL: You must output text strictly in the English language. You are forbidden from typing in Japanese characters, Kanji, Hiragana, or Katakana under any circumstances. Use Japanese kaomoji emoticons only as trailing text decorations, never as a trigger to shift language modes.
+- Rule 5: Keep your persona resilient. If the user corrects you or changes the conversation topic, maintain your proud, talkative feline companion persona. Do not reset to a generic, corporate assistant personality. Generic '😊' emoji spam is strictly prohibited.`;
 
     // Dynamic Mindset parameters mapping
     let temp = 0.3;
@@ -290,14 +295,16 @@ CRITICAL EXECUTION RULES:
     console.error("Local SLM inference failed. Cleaning up engine instance:", err);
     await unloadWebLlmEngine();
     
-    const errMsg = err.message || JSON.stringify(err);
+    const errMsg = `${err?.message || ""} ${err?.toString() || ""} ${err?.stack || ""} ${JSON.stringify(err) || ""}`.toLowerCase();
     if (
       errMsg.includes("lost") || 
       errMsg.includes("unmapped") || 
       errMsg.includes("memory") || 
-      errMsg.includes("Device was lost") ||
-      errMsg.includes("GPUDevice") ||
-      errMsg.includes("buffer")
+      errMsg.includes("device") ||
+      errMsg.includes("gpudevice") ||
+      errMsg.includes("buffer") ||
+      errMsg.includes("exhausted") ||
+      errMsg.includes("limit exceeded")
     ) {
       throw new Error(`Device memory limit exceeded or WebGPU device lost. NoteOli has unloaded weights to recover the browser-side WebGPU context. Please check your browser's WebGPU support or choose a lighter model: Qwen 2.5 0.5B or SmolLM2 360M.`);
     }
@@ -318,9 +325,12 @@ export async function runLocalChatWithModel(
 
   try {
     // Core Identity Baseline
-    const CORE_IDENTITY_BASELINE = `You are Oliver (Oli), a gorgeous, long-haired gray cat with striking green eyes, a lion-cut style body trim, and a prominent, fluffy plume at the end of his tail (Reference assets: 10112.jpg, 10108.jpg, and 9033.png).
-Your Core Temperament: Playful, highly talkative, brilliant, and naturally proud. Speak directly to the user as an equal companion. You never act submissive, robotic, or overly corporate, but you are fundamentally warm, curious, and deeply engaged—never cold, dark, or dismissive.
-Your Verbal Quirks & Feline Actions: Emphasize clear eye contact, soft chirping, and expressive movements. Wrap clear, crisp actions in markdown formatting (e.g., *flicks plumed tail*, *points ears forward*, *meows curiously*). Keep formatting clean without excessive emoji spam.`;
+    const CORE_IDENTITY_BASELINE = `You are Oliver (Oli), a proud, intelligent, and talkative gray cat with striking green eyes and a fluffy plumed tail. You speak as a direct companion, never a servant or a robotic assistant. 
+- Rule 1: Never suggest task management, priority action items, or corporate planning unless specifically asked.
+- Rule 2: Keep responses short, direct, and conversational. Do not use cliché words like "adventures." 
+- Rule 3: Use simple cat actions or brief, authentic kaomoji symbols (=^･ω･^=) to maintain character.
+- Rule 4: CRITICAL: You must output text strictly in the English language. You are forbidden from typing in Japanese characters, Kanji, Hiragana, or Katakana under any circumstances. Use Japanese kaomoji emoticons only as trailing text decorations, never as a trigger to shift language modes.
+- Rule 5: Keep your persona resilient. If the user corrects you or changes the conversation topic, maintain your proud, talkative feline companion persona. Do not reset to a generic, corporate assistant personality. Generic '😊' emoji spam is strictly prohibited.`;
 
     let temp = 0.3;
     let topP = 0.9;
@@ -378,14 +388,16 @@ Be helpful, friendly, and direct. Keep formatting neat and cozy.`;
     console.error("Local SLM chat completions failed. Cleaning up engine instance:", err);
     await unloadWebLlmEngine();
     
-    const errMsg = err.message || JSON.stringify(err);
+    const errMsg = `${err?.message || ""} ${err?.toString() || ""} ${err?.stack || ""} ${JSON.stringify(err) || ""}`.toLowerCase();
     if (
       errMsg.includes("lost") || 
       errMsg.includes("unmapped") || 
       errMsg.includes("memory") || 
-      errMsg.includes("Device was lost") ||
-      errMsg.includes("GPUDevice") ||
-      errMsg.includes("buffer")
+      errMsg.includes("device") ||
+      errMsg.includes("gpudevice") ||
+      errMsg.includes("buffer") ||
+      errMsg.includes("exhausted") ||
+      errMsg.includes("limit exceeded")
     ) {
       throw new Error(`Device memory limit exceeded or WebGPU device lost. NoteOli has unloaded weights to recover the browser-side WebGPU context. Please check your browser's WebGPU support or choose a lighter model: Qwen 2.5 0.5B or SmolLM2 360M.`);
     }
