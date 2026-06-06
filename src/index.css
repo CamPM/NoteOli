@@ -37,4 +37,14 @@ input[type="range"] {
   animation: warmRipple 0.6s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* Hide scrollbar tracks visually while preserving scroll behavior */
+.scrollbar-none {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;             /* Chrome, Safari, Opera */
+}
+
+
 
