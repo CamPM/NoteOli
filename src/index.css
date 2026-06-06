@@ -9,7 +9,7 @@
 
 /* Custom scrollbars and styling for the cozy productivity aesthetic */
 ::selection {
-  background-color: rgba(216, 140, 110, 0.22);
+  background-color: rgba(212, 175, 55, 0.22);
   color: #1d1d1f;
 }
 
@@ -20,16 +20,16 @@ textarea:focus {
 
 /* Custom warm cozy slider override styles */
 input[type="range"] {
-  accent-color: #d88c6e;
+  accent-color: #d4af37;
 }
 
 /* Cozy animations for smooth interactions */
 @keyframes warmRipple {
   0% {
-    box-shadow: 0 0 0 0 rgba(216, 140, 110, 0.4);
+    box-shadow: 0 0 0 0 rgba(212, 175, 55, 0.4);
   }
   100% {
-    box-shadow: 0 0 0 12px rgba(216, 140, 110, 0);
+    box-shadow: 0 0 0 12px rgba(212, 175, 55, 0);
   }
 }
 
@@ -48,3 +48,5 @@ input[type="range"] {
 
 
 
+
+@custom-variant dark (&:is(.dark *));

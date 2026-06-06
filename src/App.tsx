@@ -27,13 +27,16 @@ import {
   Code,
   MessageSquare,
   Send,
-  Cpu
+  Cpu,
+  Sun,
+  Moon
 } from "lucide-react";
 
 import { Tone, UtilityMacro, NoteEntry } from "./types";
 import * as audio from "./utils/audio";
 import * as storage from "./utils/storage";
 import { transformLocally } from "./utils/localTransformer";
+import { SUPPORTED_MODELS } from "./utils/webLlmEngine";
 
 const UTILITY_MACROS: { name: UtilityMacro; desc: string; icon: string }[] = [
   {
@@ -96,12 +99,7 @@ export default function App() {
   // Audio state
   const [isAudioEnabled, setIsAudioEnabled] = useState<boolean>(() => storage.loadAudioToggle());
   
-  // Engine Mode:
-  // - "native" checks for hardware pre-installed system model AICore/Gemini Nano
-  // - "sandbox" leverages local Gemma/Qwen weight sandboxing via WebGPU
-  // - "cloud" utilizes the secure proxy pipeline endpoint
-  const [engineMode, setEngineMode] = useState<"native" | "sandbox" | "cloud">("cloud");
-  const [hasNativeApi, setHasNativeApi] = useState<boolean>(false);
+  // NoteOli is now strictly 100% offline-first.
   const [mindset, setMindset] = useState<"default" | "booster" | "critic" | "randomizer" | "brainstormer">(() => {
     try {
       const saved = localStorage.getItem("noteoli_chat_mindset");
@@ -119,6 +117,16 @@ export default function App() {
   const [selectedLlmModel, setSelectedLlmModel] = useState<string>("Qwen2.5-0.5B-Instruct-q4f16_1-MLC");
   const [showSettingsDrawer, setShowSettingsDrawer] = useState<boolean>(false);
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== "undefined" ? navigator.onLine : true);
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(false);
+
+  useEffect(() => {
+    const root = window.document.documentElement;
+    if (isDarkMode) {
+      root.classList.add("dark");
+    } else {
+      root.classList.remove("dark");
+    }
+  }, [isDarkMode]);
 
   // Newly requested "Chat with Oli" interface states
   const [activeTab, setActiveTab] = useState<"edit" | "output" | "chat">("edit");
@@ -242,37 +250,16 @@ export default function App() {
     };
   }, [selectedLlmModel]);
 
-  // Initialize and check for pre-installed native AI on-device hardware APIs (AICore / Apple native)
-  useEffect(() => {
-    const detectOnDeviceApis = async () => {
-      try {
-        const { checkNativeApiSupport } = await import("./utils/webLlmEngine");
-        const supportsNative = await checkNativeApiSupport();
-        setHasNativeApi(supportsNative);
-        if (supportsNative) {
-          setEngineMode("native");
-          showToast("Compatible System Native hardware API detected (Device AICore / Neural Engine)!", "success");
-        } else {
-          setEngineMode("sandbox"); // Default to Local LLM offline model
-        }
-      } catch (e) {
-        console.warn("Failed checking on-device hardware APIs:", e);
-        setEngineMode("sandbox");
-      }
-    };
-    detectOnDeviceApis();
-  }, []);
+
 
   // Monitor browser network offline state
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
-      showToast("Online network resolved. Cloud Hybrid mode restored.", "success");
     };
     const handleOffline = () => {
       setIsOnline(false);
-      setEngineMode(hasNativeApi ? "native" : "sandbox");
-      showToast("Network offline. noteOli automatically shifted to offline-first coprocessing.", "info");
+      showToast("Network offline. NoteOli operates in 100% offline-first mode.", "info");
     };
 
     window.addEventListener("online", handleOnline);
@@ -282,7 +269,7 @@ export default function App() {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
-  }, [hasNativeApi]);
+  }, []);
 
   // Autosave draft edits to browser-native localStorage on modifications
   useEffect(() => {
@@ -410,12 +397,12 @@ Overall, great progress. Need to defluff this raw text and turn it into actionab
     }
   };
 
-  // Warm-up local LLM proactively when local LLM engine is selected
+  // Warm-up local LLM proactively when app mounts or model is switched
   useEffect(() => {
-    if (engineMode === "sandbox" && localLlmStatus === "idle") {
+    if (localLlmStatus === "idle") {
       warmLocalLlm(true);
     }
-  }, [engineMode]);
+  }, [selectedLlmModel, localLlmStatus]);
 
   // Persona initiation and conversation reset helper
   const handleInitChat = (selectedMindset: "default" | "booster" | "critic" | "randomizer" | "brainstormer") => {
@@ -570,124 +557,89 @@ Overall, great progress. Need to defluff this raw text and turn it into actionab
     try {
       let replyText = "";
 
-      if (engineMode === "native") {
-        // Attempt experimental physical AICore on-device languageModel API
-        const hasPhysicalNative = typeof window !== "undefined" && (window as any).ai?.languageModel;
-        if (hasPhysicalNative) {
-          try {
-            const systemPrompt = `You are Oliver (Oli), a proud, intelligent, and talkative gray cat with striking green eyes and a fluffy plumed tail. You speak as a direct companion, never a servant or a robotic assistant. 
-- Rule 1: Never suggest task management, priority action items, or corporate planning unless specifically asked.
-- Rule 2: Keep responses short, direct, and conversational. Do not use cliché words like "adventures." 
-- Rule 3: Use simple cat actions or brief, authentic kaomoji symbols (=^･ω･^=) to maintain character.
-- Rule 4: CRITICAL: You must output text strictly in the English language. You are forbidden from typing in Japanese characters, Kanji, Hiragana, or Katakana under any circumstances. Use Japanese kaomoji emoticons only as trailing text decorations, never as a trigger to shift language modes.
-- Rule 5: Keep your persona resilient. If the user corrects you or changes the conversation topic, maintain your proud, talkative feline companion persona. Do not reset to a generic, corporate assistant personality. Generic '😊' emoji spam is strictly prohibited.
-Active Mindset is: ${mindset}.`;
-            const session = await (window as any).ai.languageModel.create({ systemPrompt });
-            replyText = await session.prompt(userText);
-          } catch (nativeErr: any) {
-            throw new Error(`Device native neural core failed to process the request: ${nativeErr.message || nativeErr}`);
-          }
-        } else {
-          throw new Error("Genuine System Native hardware cores (window.ai) are unavailable or unconfigured on this device.");
-        }
-
-      } else if (engineMode === "sandbox" || !isOnline) {
-        // Make sure local LLM is loaded
-        if (localLlmStatus === "idle") {
-          await warmLocalLlm(false);
-        }
-
-        if (localLlmStatus === "ready" || useActualLlm) {
-          try {
-            const { runLocalChatWithModel } = await import("./utils/webLlmEngine");
-            replyText = await runLocalChatWithModel(updatedMessages, mindset);
-          } catch (modelErr: any) {
-            console.error("Local SLM chat failed, attempting self-healing recovery:", modelErr);
-            const modelErrMsg = `${modelErr?.message || ""} ${modelErr?.toString() || ""} ${modelErr?.stack || ""} ${JSON.stringify(modelErr) || ""}`.toLowerCase();
-            const isGpuIssue = modelErrMsg.includes("lost") || 
-                               modelErrMsg.includes("unmapped") || 
-                               modelErrMsg.includes("memory") || 
-                               modelErrMsg.includes("gpudevicelostinfo") || 
-                               modelErrMsg.includes("gpudevice") || 
-                               modelErrMsg.includes("buffer") || 
-                               modelErrMsg.includes("exhausted") || 
-                               modelErrMsg.includes("limit exceeded");
-            
-            if (isGpuIssue) {
-              const { unloadWebLlmEngine } = await import("./utils/webLlmEngine");
-              await unloadWebLlmEngine();
-              
-              if (selectedLlmModel === "gemma-2-2b-it-q4f16_1-MLC") {
-                showToast("WebGPU memory limit exceeded. Resetting and loading Ultra-Light Qwen 2.5 0.5B...", "info");
-                setSelectedLlmModel("Qwen2.5-0.5B-Instruct-q4f16_1-MLC");
-                setLocalLlmStatus("idle");
-                setUseActualLlm(false);
-                setTimeout(() => { warmLocalLlm(false); }, 300);
-              } else if (selectedLlmModel === "Qwen2.5-0.5B-Instruct-q4f16_1-MLC") {
-                showToast("WebGPU memory limit exceeded. Resetting and loading Feather-Weight SmolLM2 360M...", "info");
-                setSelectedLlmModel("SmolLM2-360M-Instruct-q4f16_1-MLC");
-                setLocalLlmStatus("idle");
-                setUseActualLlm(false);
-                setTimeout(() => { warmLocalLlm(false); }, 300);
-              } else {
-                showToast("WebGPU lost context completely. Switching off local engine.", "info");
-                setLocalLlmStatus("unsupported");
-                setUseActualLlm(false);
-              }
-
-              // Build smart rule-based response immediately to keep session active seamlessly
-              if (mindset === "booster") {
-                replyText = `*Flicks plumed tail.* WebGPU memory was low, so I reset to lighter weights, but I'm still listening. Tell me more about "${userText.substring(0, 40)}"! (=^･ω･^=) 🚀`;
-              } else if (mindset === "randomizer") {
-                replyText = `*Meows curiously.* WebGPU memory was low, so I cleared the cache. Let's stay playful: what if we took "${userText.substring(0, 30)}" and flipped it backward? (=｀ω´=) 🎲`;
-              } else if (mindset === "brainstormer") {
-                replyText = `*Points ears forward.* WebGPU memory limit triggered a clean reset to prevent locks. Let's keep exploring "${userText.substring(0, 40)}" together. (︶￣ω￣︶)`;
-              } else if (mindset === "critic" || mindset === "de-fluff") {
-                replyText = `*Looks at you strategically.* WebGPU memory limits hit our active Local LLM weights. I've automatically unloaded them. Let's inspect the situation carefully. (=｀•ω•´=)`;
-              } else {
-                replyText = `*Flicks plumed tail.* My local WebGPU engine ran low on memory, so I've unloaded the weights to safeguard your browser context. What are your thoughts? (=^･ω･^=)`;
-              }
-            } else {
-              throw modelErr;
-            }
-          }
-        } else {
-          // Cozy fallback chat response builder when offline without WebGPU
-          await new Promise((r) => setTimeout(r, 800));
-          if (mindset === "booster") {
-            replyText = `*Chirps happily.* That's a great thought! I love how you're approaching this. Let's talk more about "${userText.substring(0, 50)}...". (=^･ω･^=) 🚀`;
-          } else if (mindset === "randomizer") {
-            replyText = `*Meows playfully.* Let's look at this from a totally weird angle. What if we completely flipped your main assumption on its head? (=｀ω´=) 🎲`;
-          } else if (mindset === "brainstormer") {
-            replyText = `*Points ears forward.* Let's map out some alternative directions for "${userText.substring(0, 50)}...". What other options do you see? (︶￣ω￣︶)`;
-          } else if (mindset === "critic" || mindset === "de-fluff") {
-            replyText = `*Looks at you strategically.* Let's analyze details for "${userText.substring(0, 50)}...". Where do you think the main trade-offs or weaknesses are? (=｀•ω•´=)`;
-          } else {
-            replyText = `*Flicks plumed tail.* I hear you. Let me think about "${userText.substring(0, 50)}..." for a moment. What are your honest thoughts on how we should play this? (=^･ω･^=)`;
-          }
-        }
-
-      } else {
-        // Cloud Hybrid mode (direct Post API call)
-        const res = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: updatedMessages, mindset }),
-        });
-        if (!res.ok) {
-          const errData = await res.json();
-          throw new Error(errData.error || "Failed to fetch response.");
-        }
-        const data = await res.json();
-        replyText = data.text;
+      // Make sure local LLM is loaded
+      if (localLlmStatus === "idle") {
+        await warmLocalLlm(false);
       }
+
+      if (localLlmStatus === "ready" || useActualLlm) {
+        try {
+          const { runLocalChatWithModel } = await import("./utils/webLlmEngine");
+          replyText = await runLocalChatWithModel(updatedMessages, mindset);
+        } catch (modelErr: any) {
+          console.error("Local SLM chat failed, attempting self-healing recovery:", modelErr);
+          const modelErrMsg = `${modelErr?.message || ""} ${modelErr?.toString() || ""} ${modelErr?.stack || ""} ${JSON.stringify(modelErr) || ""}`.toLowerCase();
+          const isGpuIssue = modelErrMsg.includes("lost") || 
+                             modelErrMsg.includes("unmapped") || 
+                             modelErrMsg.includes("memory") || 
+                             modelErrMsg.includes("gpudevicelostinfo") || 
+                             modelErrMsg.includes("gpudevice") || 
+                             modelErrMsg.includes("buffer") || 
+                             modelErrMsg.includes("exhausted") || 
+                             modelErrMsg.includes("limit exceeded");
+          
+          if (isGpuIssue) {
+            const { unloadWebLlmEngine } = await import("./utils/webLlmEngine");
+            await unloadWebLlmEngine();
+            
+            if (selectedLlmModel === "gemma-2-2b-it-q4f16_1-MLC") {
+              showToast("WebGPU memory limit exceeded. Resetting and loading Tier 2 Qwen...", "info");
+              setSelectedLlmModel("Qwen2.5-0.5B-Instruct-q4f16_1-MLC");
+              setLocalLlmStatus("idle");
+              setUseActualLlm(false);
+              setTimeout(() => { warmLocalLlm(false); }, 300);
+            } else if (selectedLlmModel === "Qwen2.5-0.5B-Instruct-q4f16_1-MLC") {
+              showToast("WebGPU memory limit exceeded. Resetting and loading Tier 1 SmolLM2...", "info");
+              setSelectedLlmModel("SmolLM2-360M-Instruct-q4f16_1-MLC");
+              setLocalLlmStatus("idle");
+              setUseActualLlm(false);
+              setTimeout(() => { warmLocalLlm(false); }, 300);
+            } else {
+              showToast("WebGPU lost context completely. Switching off local engine.", "info");
+              setLocalLlmStatus("unsupported");
+              setUseActualLlm(false);
+            }
+
+            // Build smart rule-based response immediately to keep session active seamlessly
+            if (mindset === "booster") {
+              replyText = `*Flicks plumed tail.* WebGPU memory was low, so I reset to lighter weights, but I'm still listening. Tell me more about "${userText.substring(0, 40)}"! (=^･ω･^=) 🚀`;
+            } else if (mindset === "randomizer") {
+              replyText = `*Meows curiously.* WebGPU memory was low, so I cleared the cache. Let's stay playful: what if we took "${userText.substring(0, 30)}" and flipped it backward? (=｀ω´=) 🎲`;
+            } else if (mindset === "brainstormer") {
+              replyText = `*Points ears forward.* WebGPU memory limit triggered a clean reset to prevent locks. Let's keep exploring "${userText.substring(0, 40)}" together. (︶￣ω￣︶)`;
+            } else if (mindset === "critic" || mindset === "de-fluff") {
+              replyText = `*Looks at you strategically.* WebGPU memory limits hit our active Local LLM weights. I've automatically unloaded them. Let's inspect the situation carefully. (=｀•ω•´=)`;
+            } else {
+              replyText = `*Flicks plumed tail.* My local WebGPU engine ran low on memory, so I've unloaded the weights to safeguard your browser context. What are your thoughts? (=^･ω･^=)`;
+            }
+          } else {
+            throw modelErr;
+          }
+        }
+      } else {
+        // Cozy fallback chat response builder when offline without WebGPU
+        await new Promise((r) => setTimeout(r, 800));
+        if (mindset === "booster") {
+          replyText = `*Chirps happily.* That's a great thought! I love how you're approaching this. Let's talk more about "${userText.substring(0, 50)}...". (=^･ω･^=) 🚀`;
+        } else if (mindset === "randomizer") {
+          replyText = `*Meows playfully.* Let's look at this from a totally weird angle. What if we completely flipped your main assumption on its head? (=｀ω´=) 🎲`;
+        } else if (mindset === "brainstormer") {
+          replyText = `*Points ears forward.* Let's map out some alternative directions for "${userText.substring(0, 50)}...". What other options do you see? (︶￣ω￣︶)`;
+        } else if (mindset === "critic" || mindset === "de-fluff") {
+          replyText = `*Looks at you strategically.* Let's analyze details for "${userText.substring(0, 50)}...". Where do you think the main trade-offs or weaknesses are? (=｀•ω•´=)`;
+        } else {
+          replyText = `*Flicks plumed tail.* I hear you. Let me think about "${userText.substring(0, 50)}..." for a moment. What are your honest thoughts on how we should play this? (=^･ω･^=)`;
+        }
+      }
+
+      const activeEngineMeta = selectedLlmModel === "SmolLM2-360M-Instruct-q4f16_1-MLC" ? "Local LLM: Tier 1 (SmolLM2)" : selectedLlmModel === "Qwen2.5-0.5B-Instruct-q4f16_1-MLC" ? "Local LLM: Tier 2 (Qwen 3B)" : "Local LLM: Tier 3 (Gemma 2)";
 
       const oliMessage = {
         id: "msg-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
         sender: "oli" as const,
         text: replyText,
         timestamp: new Date().toLocaleTimeString(),
-        meta: engineMode === "native" ? "System Native Core" : engineMode === "sandbox" ? "Local LLM Core" : "Cloud Hybrid Core",
+        meta: activeEngineMeta,
       };
 
       setChatMessages((prev) => [...prev, oliMessage]);
@@ -700,7 +652,7 @@ Active Mindset is: ${mindset}.`;
       const errorMsg = {
         id: "msg-err-" + Date.now(),
         sender: "oli" as const,
-        text: `⚠️ I had a brief synapse disconnect: ${e.message || "connection error"}. Let's make sure our active Transformation Core settings are loaded correctly or switch to Cloud Hybrid.`,
+        text: `⚠️ I had a brief synapse disconnect: ${e.message || "connection error"}. Let's make sure our active Local Transformation Engine settings are loaded correctly.`,
         timestamp: new Date().toLocaleTimeString(),
       };
       setChatMessages((prev) => [...prev, errorMsg]);
@@ -732,125 +684,73 @@ Active Mindset is: ${mindset}.`;
     const phaseDelay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
     try {
-      if (engineMode === "native") {
-        setProcessingPhase("Executing System Native hardware coprocessor...");
-        await phaseDelay(200);
-
-        // Check for experimental Google Chrome window.ai
-        const hasPhysicalNative = typeof window !== "undefined" && (window as any).ai?.languageModel;
-        let responseText = "";
-
-        if (hasPhysicalNative) {
-          try {
-            const systemPrompt = `You are Oliver (Oli), a gorgeous, long-haired gray cat with striking green eyes, a lion-cut style body trim, and a prominent, fluffy plume at the end of his tail.
-Your Core Temperament: Playful, highly talkative, brilliant, and naturally proud. Wrap actions in markdown (e.g., *flicks plumed tail*, *points ears forward*, *meows curiously*).
-Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility macro ${utility} and tone ${tone} with length scale ${length}.`;
-            const session = await (window as any).ai.languageModel.create({ systemPrompt });
-            responseText = await session.prompt(inputText);
-          } catch (nativeErr: any) {
-            throw new Error(`Device native neural core failed to process transformation: ${nativeErr.message || nativeErr}`);
-          }
-        } else {
-          throw new Error("Genuine System Native hardware coprocessor is unavailable or unconfigured (requires Chrome window.ai).");
-        }
-
-        setOutputText(responseText);
-        showToast(`Transformed using zero-footprint Hardware Optimized System Native AI. [Mindset: ${mindset.toUpperCase()}]`, "success");
-        playClick("success");
-      } 
-      else if (engineMode === "sandbox" || !isOnline) {
-        // If they chose sandbox but the model is idle/not ready yet, try to load it first
-        if (localLlmStatus === "idle") {
-          await warmLocalLlm(false);
-        }
-
-        const { SUPPORTED_MODELS } = await import("./utils/webLlmEngine");
-        const modelMeta = SUPPORTED_MODELS.find((m) => m.id === selectedLlmModel);
-        const currentModelBaseName = modelMeta ? modelMeta.name.split(" (")[0] : "Local LLM";
-
-        if (localLlmStatus === "ready" || useActualLlm) {
-          setProcessingPhase(`${currentModelBaseName} local inference via WebGPU...`);
-          try {
-            const { runLocalTransformWithModel } = await import("./utils/webLlmEngine");
-            const response = await runLocalTransformWithModel(inputText, tone, length, utility, mindset);
-            setOutputText(response);
-            showToast(`Transformed completely offline with ${currentModelBaseName} via WebGPU. [Mindset: ${mindset.toUpperCase()}]`, "success");
-          } catch (modelErr: any) {
-            console.error("Local SLM transform execution issue:", modelErr);
-            const modelErrMsg = `${modelErr?.message || ""} ${modelErr?.toString() || ""} ${modelErr?.stack || ""} ${JSON.stringify(modelErr) || ""}`.toLowerCase();
-            const isGpuIssue = modelErrMsg.includes("lost") || 
-                               modelErrMsg.includes("unmapped") || 
-                               modelErrMsg.includes("memory") || 
-                               modelErrMsg.includes("gpudevicelostinfo") || 
-                               modelErrMsg.includes("gpudevice") || 
-                               modelErrMsg.includes("buffer") || 
-                               modelErrMsg.includes("exhausted") || 
-                               modelErrMsg.includes("limit exceeded");
-            
-            if (isGpuIssue) {
-              const { unloadWebLlmEngine } = await import("./utils/webLlmEngine");
-              await unloadWebLlmEngine();
-              
-              if (selectedLlmModel === "gemma-2-2b-it-q4f16_1-MLC") {
-                showToast("WebGPU memory limit exceeded. Downgrading to Ultra-Light Qwen 2.5 0.5B...", "info");
-                setSelectedLlmModel("Qwen2.5-0.5B-Instruct-q4f16_1-MLC");
-                setLocalLlmStatus("idle");
-                setUseActualLlm(false);
-                setTimeout(() => { warmLocalLlm(false); }, 300);
-              } else if (selectedLlmModel === "Qwen2.5-0.5B-Instruct-q4f16_1-MLC") {
-                showToast("WebGPU memory limit exceeded. Downgrading to SmolLM2 360M...", "info");
-                setSelectedLlmModel("SmolLM2-360M-Instruct-q4f16_1-MLC");
-                setLocalLlmStatus("idle");
-                setUseActualLlm(false);
-                setTimeout(() => { warmLocalLlm(false); }, 300);
-              } else {
-                showToast("WebGPU lost context completely. Utilizing backup rule-compiler.", "info");
-                setLocalLlmStatus("unsupported");
-                setUseActualLlm(false);
-              }
-              
-              // Fallback immediately to local rule compiler
-              const response = transformLocally(inputText, tone, length, utility, mindset);
-              setOutputText(response);
-              showToast("Transformed offline via Backup Rule Coprocessor (due to WebGPU error).", "success");
-            } else {
-              throw modelErr;
-            }
-          }
-        } else {
-          // Rule compilation fallback
-          await phaseDelay(300);
-          setProcessingPhase("Executing Local Coprocessor...");
-          const response = transformLocally(inputText, tone, length, utility, mindset);
-          setOutputText(response);
-          showToast(`Transformed via Secure Offline Local Coprocessor. [Mindset: ${mindset.toUpperCase()}]`, "success");
-        }
-        playClick("success");
-      } else {
-        // Query server side proxy which calls Gemini 2.5 with server safety and mindset constraints
-        setProcessingPhase("Oli SLM compiling remote output...");
-        const res = await fetch("/api/transform", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            text: inputText,
-            tone,
-            length,
-            utility,
-            mindset
-          })
-        });
-
-        if (!res.ok) {
-          const errData = await res.json();
-          throw new Error(errData.error || "Server failed to process note.");
-        }
-
-        const data = await res.json();
-        setOutputText(data.text);
-        playClick("success");
-        showToast(`Transformed successfully using Oli AI Cloud Hybrid. [Mindset: ${mindset.toUpperCase()}]`, "success");
+      // If the model is idle/not ready yet, try to load it first
+      if (localLlmStatus === "idle") {
+        await warmLocalLlm(false);
       }
+
+      const { SUPPORTED_MODELS } = await import("./utils/webLlmEngine");
+      const modelMeta = SUPPORTED_MODELS.find((m) => m.id === selectedLlmModel);
+      const currentModelBaseName = modelMeta ? modelMeta.name.split(" (")[0] : "Local LLM";
+
+      if (localLlmStatus === "ready" || useActualLlm) {
+        setProcessingPhase(`${currentModelBaseName} local inference via WebGPU...`);
+        try {
+          const { runLocalTransformWithModel } = await import("./utils/webLlmEngine");
+          const response = await runLocalTransformWithModel(inputText, tone, length, utility, mindset);
+          setOutputText(response);
+          showToast(`Transformed completely offline with ${currentModelBaseName} via WebGPU. [Mindset: ${mindset.toUpperCase()}]`, "success");
+        } catch (modelErr: any) {
+          console.error("Local SLM transform execution issue:", modelErr);
+          const modelErrMsg = `${modelErr?.message || ""} ${modelErr?.toString() || ""} ${modelErr?.stack || ""} ${JSON.stringify(modelErr) || ""}`.toLowerCase();
+          const isGpuIssue = modelErrMsg.includes("lost") || 
+                             modelErrMsg.includes("unmapped") || 
+                             modelErrMsg.includes("memory") || 
+                             modelErrMsg.includes("gpudevicelostinfo") || 
+                             modelErrMsg.includes("gpudevice") || 
+                             modelErrMsg.includes("buffer") || 
+                             modelErrMsg.includes("exhausted") || 
+                             modelErrMsg.includes("limit exceeded");
+          
+          if (isGpuIssue) {
+            const { unloadWebLlmEngine } = await import("./utils/webLlmEngine");
+            await unloadWebLlmEngine();
+            
+            if (selectedLlmModel === "gemma-2-2b-it-q4f16_1-MLC") {
+              showToast("WebGPU memory limit exceeded. Downgrading to Tier 2 Qwen...", "info");
+              setSelectedLlmModel("Qwen2.5-0.5B-Instruct-q4f16_1-MLC");
+              setLocalLlmStatus("idle");
+              setUseActualLlm(false);
+              setTimeout(() => { warmLocalLlm(false); }, 300);
+            } else if (selectedLlmModel === "Qwen2.5-0.5B-Instruct-q4f16_1-MLC") {
+              showToast("WebGPU memory limit exceeded. Downgrading to Tier 1 SmolLM2...", "info");
+              setSelectedLlmModel("SmolLM2-360M-Instruct-q4f16_1-MLC");
+              setLocalLlmStatus("idle");
+              setUseActualLlm(false);
+              setTimeout(() => { warmLocalLlm(false); }, 300);
+            } else {
+              showToast("WebGPU lost context completely. Utilizing backup rule-compiler.", "info");
+              setLocalLlmStatus("unsupported");
+              setUseActualLlm(false);
+            }
+            
+            // Fallback immediately to local rule compiler
+            const response = transformLocally(inputText, tone, length, utility, mindset);
+            setOutputText(response);
+            showToast("Transformed offline via Backup Rule Coprocessor (due to WebGPU error).", "success");
+          } else {
+            throw modelErr;
+          }
+        }
+      } else {
+        // Rule compilation fallback
+        await phaseDelay(300);
+        setProcessingPhase("Executing Local Coprocessor...");
+        const response = transformLocally(inputText, tone, length, utility, mindset);
+        setOutputText(response);
+        showToast(`Transformed via Secure Offline Local Coprocessor. [Mindset: ${mindset.toUpperCase()}]`, "success");
+      }
+      playClick("success");
       
       // Critique 3: Smooth scroll output into view so users don't scroll blindly!
       setTimeout(() => {
@@ -999,21 +899,13 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
   };
 
   const getExportHeader = (viewName: "Scratchpad" | "Polished Note" | "Chat") => {
-    let activeEngineName = "Cloud Hybrid";
-    if (engineMode === "native") {
-      activeEngineName = "System Native";
-    } else if (engineMode === "cloud") {
-      activeEngineName = "Cloud Hybrid";
-    } else if (engineMode === "sandbox") {
-      if (selectedLlmModel === "gemma-2-2b-it-q4f16_1-MLC") {
-        activeEngineName = "Gemma 2 2B";
-      } else if (selectedLlmModel === "Qwen2.5-0.5B-Instruct-q4f16_1-MLC") {
-        activeEngineName = "Qwen 2.5";
-      } else if (selectedLlmModel === "SmolLM2-360M-Instruct-q4f16_1-MLC") {
-        activeEngineName = "SmolLM2";
-      } else {
-        activeEngineName = "Local LLM";
-      }
+    let activeEngineName = "Local LLM: Tier 2 (Qwen)";
+    if (selectedLlmModel === "SmolLM2-360M-Instruct-q4f16_1-MLC") {
+      activeEngineName = "Local LLM: Tier 1 (SmolLM2)";
+    } else if (selectedLlmModel === "Qwen2.5-0.5B-Instruct-q4f16_1-MLC") {
+      activeEngineName = "Local LLM: Tier 2 (Qwen)";
+    } else if (selectedLlmModel === "gemma-2-2b-it-q4f16_1-MLC") {
+      activeEngineName = "Local LLM: Tier 3 (Gemma 2)";
     }
 
     let selectedMode = "";
@@ -1135,9 +1027,9 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
       .replace(/>/g, "&gt;");
 
     // Convert Headers h3, h2, h1
-    html = html.replace(/^### (.*$)/gim, '<h3 class="text-lg font-bold text-[#1d1d1f] font-sans mt-4 mb-2">$1</h3>');
-    html = html.replace(/^## (.*$)/gim, '<h2 class="text-xl font-bold text-[#1d1d1f] font-sans mt-5 mb-2">$1</h2>');
-    html = html.replace(/^# (.*$)/gim, '<h1 class="text-2xl font-black text-[#1d1d1f] font-display mt-6 mb-3">$1</h1>');
+    html = html.replace(/^### (.*$)/gim, '<h3 class="text-lg font-bold text-stone-950 dark:text-stone-100 font-sans mt-4 mb-2">$1</h3>');
+    html = html.replace(/^## (.*$)/gim, '<h2 class="text-xl font-bold text-stone-950 dark:text-stone-100 font-sans mt-5 mb-2">$1</h2>');
+    html = html.replace(/^# (.*$)/gim, '<h1 class="text-2xl font-black text-stone-950 dark:text-stone-100 font-display mt-6 mb-3">$1</h1>');
 
     // Convert Bold
     html = html.replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold text-black">$1</strong>');
@@ -1146,17 +1038,17 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
     html = html.replace(/\*(.*?)\*/g, '<em class="italic text-gray-800">$1</em>');
 
     // Convert backtick inline codes
-    html = html.replace(/`(.*?)`/g, '<code class="bg-[#f5f5f7] px-1.5 py-0.5 rounded text-sm text-[#c5a059] font-mono border border-[#e5e5eb]">$1</code>');
+    html = html.replace(/`(.*?)`/g, '<code class="bg-[#f5f5f7] px-1.5 py-0.5 rounded text-sm text-[#c5a059] font-mono border border-neutral-200 dark:border-neutral-700">$1</code>');
 
     // Convert list checkboxes unchecked
-    html = html.replace(/^\s*-\s*\[\s*\]\s*(.*$)/gim, '<div class="flex items-start gap-2 my-1"><input type="checkbox" disabled class="mt-1 w-4 h-4 accent-[#d4af37]" /> <span class="font-sans text-[#1d1d1f]">$1</span></div>');
+    html = html.replace(/^\s*-\s*\[\s*\]\s*(.*$)/gim, '<div class="flex items-start gap-2 my-1"><input type="checkbox" disabled class="mt-1 w-4 h-4 accent-[#d4af37]" /> <span class="font-sans text-stone-950 dark:text-stone-100">$1</span></div>');
     
     // Convert list checkboxes checked
     html = html.replace(/^\s*-\s*\[x\]\s*(.*$)/gim, '<div class="flex items-start gap-2 my-1"><input type="checkbox" checked disabled class="mt-1 w-4 h-4 accent-[#d4af37]" /> <span class="font-sans line-through text-gray-500">$1</span></div>');
 
     // Convert Bullet lists
-    html = html.replace(/^\s*-\s+(.*$)/gim, '<li class="ml-4 list-disc font-sans text-[#1d1d1f] my-0.5">$1</li>');
-    html = html.replace(/^\s*•\s+(.*$)/gim, '<li class="ml-4 list-disc font-sans text-[#1d1d1f] my-0.5">$1</li>');
+    html = html.replace(/^\s*-\s+(.*$)/gim, '<li class="ml-4 list-disc font-sans text-stone-950 dark:text-stone-100 my-0.5">$1</li>');
+    html = html.replace(/^\s*•\s+(.*$)/gim, '<li class="ml-4 list-disc font-sans text-stone-950 dark:text-stone-100 my-0.5">$1</li>');
 
     // Convert Tables markdown syntax (basic line replacement)
     const lines = html.split("\n");
@@ -1168,7 +1060,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
       if (line.startsWith("|") && line.endsWith("|")) {
         if (!inTable) {
           inTable = true;
-          tableHtml += '<div class="overflow-x-auto my-4"><table class="min-w-full border border-[#e5e5eb] border-collapse bg-white rounded-lg text-sm font-sans">';
+          tableHtml += '<div class="overflow-x-auto my-4"><table class="min-w-full border border-neutral-200 dark:border-neutral-700 border-collapse bg-white rounded-lg text-sm font-sans">';
         }
         
         const cols = line.split("|").slice(1, -1).map(c => c.trim());
@@ -1181,12 +1073,12 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
         // Check if header row (assume first row in active table block)
         const isHeader = tableHtml.endsWith("</table>") || tableHtml.endsWith('rounded-lg text-sm font-sans">');
         
-        tableHtml += '<tr class="border-b border-[#e5e5eb] hover:bg-[#fafafc] transition-colors">';
+        tableHtml += '<tr class="border-b border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors">';
         cols.forEach(c => {
           if (isHeader) {
-            tableHtml += `<th class="px-3 py-2 text-left font-semibold text-[#1d1d1f] bg-[#f5f5f7] border-r border-[#e5e5eb]">${c}</th>`;
+            tableHtml += `<th class="px-3 py-2 text-left font-semibold text-stone-950 dark:text-stone-100 bg-[#f5f5f7] border-r border-neutral-200 dark:border-neutral-700">${c}</th>`;
           } else {
-            tableHtml += `<td class="px-3 py-2 text-[#1d1d1f] border-r border-[#e5e5eb]">${c}</td>`;
+            tableHtml += `<td class="px-3 py-2 text-stone-950 dark:text-stone-100 border-r border-neutral-200 dark:border-neutral-700">${c}</td>`;
           }
         });
         tableHtml += "</tr>";
@@ -1219,7 +1111,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
   );
 
   return (
-    <div id="noteoli-application-root" className="min-h-screen md:h-screen md:max-h-screen overflow-y-auto md:overflow-hidden bg-[#faf6f0] text-neutral-800 font-sans selection:bg-[#d88c6e]/20 flex flex-col relative antialiased animate-fade-in">
+    <div id="noteoli-application-root" className="min-h-screen md:h-screen md:max-h-screen overflow-y-auto md:overflow-hidden bg-white dark:bg-stone-950 text-stone-900 dark:text-stone-200 font-sans selection:bg-[#d4af37]/20 flex flex-col relative antialiased animate-fade-in">
       
       {/* Toast notifications container */}
       <div id="noteoli-toasts-area" className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full">
@@ -1227,22 +1119,22 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
           <div
             key={toast.id}
             id={`toast-${toast.id}`}
-            className={`p-4 rounded-lg shadow-md border-l-4 grow flex items-center justify-between text-sm transition-all duration-300 transform translate-x-0 bg-white ${
+            className={`p-4 rounded-lg shadow-md border-l-4 grow flex items-center justify-between text-sm transition-all duration-300 transform translate-x-0 bg-white dark:bg-stone-900 ${
               toast.type === "success"
-                ? "border-l-[#d88c6e] text-neutral-800 font-display"
+                ? "border-l-[#d4af37] text-stone-900 dark:text-stone-100 font-display"
                 : toast.type === "error"
-                ? "border-l-red-500 text-red-800 bg-red-50/90 font-display"
-                : "border-l-blue-400 text-blue-900 bg-blue-50/90 font-display"
+                ? "border-l-red-500 text-red-800 dark:text-red-400 bg-red-50/90 dark:bg-red-950/90 font-display"
+                : "border-l-blue-400 text-blue-900 dark:text-blue-400 bg-blue-50/90 dark:bg-blue-950/90 font-display"
             }`}
           >
             <div className="flex items-center gap-2">
-              {toast.type === "success" && <Sparkles className="w-4 h-4 text-[#d88c6e]" />}
+              {toast.type === "success" && <Sparkles className="w-4 h-4 text-sky-600 dark:text-sky-400" />}
               <p className="font-semibold text-xs">{toast.msg}</p>
             </div>
             <button
               id={`close-toast-${toast.id}`}
               onClick={() => setToasts((prev) => prev.filter((t) => t.id !== toast.id))}
-              className="text-gray-400 hover:text-gray-600 ml-2"
+              className="text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 ml-2"
             >
               <X className="w-4 h-4" />
             </button>
@@ -1251,17 +1143,17 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
       </div>
 
       {/* Top Header */}
-      <header id="noteoli-header" className="bg-[#fdfbf7] border-b border-[#ebdccb] px-6 py-3 flex items-center justify-between shadow-xs shrink-0 select-none relative z-40">
-        {/* Left branding */}
+      <header id="noteoli-header" className="bg-white dark:bg-stone-900 border-b border-neutral-200 dark:border-neutral-700 px-6 py-3 flex items-center justify-between shadow-xs shrink-0 select-none relative z-40">
+              {/* Left branding */}
         <div id="header-branding" className="flex items-center gap-2 animate-fade-in">
-          <h1 id="noteoli-logo-text" className="font-display font-medium text-lg leading-none text-neutral-800 flex items-center gap-1.5 font-bold">
-            NoteOli <span className="text-[9px] bg-[#d88c6e] text-white font-mono px-1.5 py-0.5 rounded tracking-normal font-semibold">WORKSPACE</span>
+          <h1 id="noteoli-logo-text" className="font-display font-medium text-lg leading-none text-stone-950 dark:text-stone-100 flex items-center gap-1.5 font-bold">
+            NoteOli <span className="text-[9px] bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-950 font-mono px-1.5 py-0.5 rounded tracking-normal font-semibold">WORKSPACE</span>
           </h1>
         </div>
 
         {/* Center Part: Vector silhouette of a cat head */}
         <div id="header-center" className="absolute left-1/2 transform -translate-x-1/2 flex items-center select-none pointer-events-none">
-          <svg viewBox="0 0 100 100" className="w-8 h-8 text-[#d88c6e] fill-current" xmlns="http://www.w3.org/2000/svg">
+          <svg viewBox="0 0 100 100" className="w-8 h-8 text-[#d4af37] fill-current" xmlns="http://www.w3.org/2000/svg">
             <path d="M15 38 L28 15 L40 28 L60 28 L72 15 L85 38 C90 48 90 64 85 75 C80 84 70 88 50 88 C30 88 20 84 15 75 C10 64 10 48 15 38 Z" />
             <circle cx="36" cy="52" r="3.5" fill="#faf6f0" />
             <circle cx="64" cy="52" r="3.5" fill="#faf6f0" />
@@ -1271,19 +1163,16 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
 
         {/* Right Panel elements */}
         <div id="header-actions" className="flex items-center gap-2">
-          {/* Audio volume haptic keys */}
+          {/* Theme toggle controller */}
           <button
-            id="tactile-audio-toggle"
-            onClick={handleAudioToggle}
-            className={`p-2 rounded-lg border transition-all ${
-              isAudioEnabled
-                ? "bg-[#d88c6e]/10 text-[#d88c6e] border-[#d88c6e]"
-                : "bg-white text-gray-400 border-[#ebdccb] hover:text-gray-600"
-            }`}
-            title={isAudioEnabled ? "Silence mechanical clicks" : "Unmute high-fidelity mechanical click keys"}
+            id="theme-toggle-btn"
+            onClick={() => setIsDarkMode(!isDarkMode)}
+            className="p-2 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white transition-all"
+            title={isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
           >
-            {isAudioEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+            {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
           </button>
+
 
           {/* Archived notes log picker */}
           <button
@@ -1294,8 +1183,8 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
             }}
             className={`px-3 py-1.5 rounded-lg border text-xs font-display flex items-center gap-1.5 transition-all ${
               showHistoryDrawer || activeHistoryNoteId
-                ? "bg-[#d88c6e]/10 text-[#d88c6e] border-[#d88c6e]"
-                : "bg-white text-neutral-600 border-[#ebdccb] hover:bg-neutral-50"
+                ? "bg-sky-50 text-sky-700 border-sky-200"
+                : "bg-white text-neutral-600 border-neutral-200 hover:bg-neutral-50"
             }`}
           >
             <BookOpen className="w-3.5 h-3.5" />
@@ -1314,7 +1203,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
               playClick("click");
               setShowSettingsDrawer(true);
             }}
-            className="p-2 px-3 rounded-lg border bg-white border-[#ebdccb] hover:bg-[#fafafc] text-neutral-700 transition-all font-display font-semibold text-xs flex items-center gap-1 cursor-pointer"
+            className="p-2 px-3 rounded-lg border bg-white border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 text-neutral-700 transition-all font-display font-semibold text-xs flex items-center gap-1 cursor-pointer"
             title="Configure engine tones & macros"
           >
             <span className="text-sm">☰</span>
@@ -1329,7 +1218,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
         {/* Workspace Selector Segmented Tabs (New 3-View Architecture) */}
         <div 
           id="workspace-view-tabs" 
-          className="flex items-center overflow-x-auto whitespace-nowrap scrollbar-none bg-[#eae1d5]/40 border border-[#ebdccb] p-1 rounded-xl gap-1 shrink-0 select-none mx-1 mb-1 transition-all"
+          className="flex items-center overflow-x-auto whitespace-nowrap scrollbar-none bg-stone-50 dark:bg-stone-900 border border-neutral-200 dark:border-neutral-700 p-1 rounded-xl gap-1 shrink-0 select-none mx-1 mb-1 transition-all"
         >
           <button
             id="tab-btn-edit"
@@ -1339,8 +1228,8 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
             }}
             className={`flex-1 shrink-0 px-4 py-2 rounded-lg text-xs font-display flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
               activeTab === "edit"
-                ? "bg-white text-[#d88c6e] shadow-xs border border-[#ebdccb]/30 font-bold"
-                : "text-neutral-500 hover:text-neutral-700 font-medium"
+                ? "bg-white text-stone-900 font-bold border-b-2 border-b-[#d4af37]"
+                : "text-neutral-500 hover:text-stone-700 font-medium"
             }`}
           >
             <span>[📝 Scratchpad]</span>
@@ -1354,8 +1243,8 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
             }}
             className={`flex-1 shrink-0 px-4 py-2 rounded-lg text-xs font-display flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
               activeTab === "output"
-                ? "bg-white text-[#d88c6e] shadow-xs border border-[#ebdccb]/30 font-bold"
-                : "text-neutral-500 hover:text-neutral-700 font-medium"
+                ? "bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100 shadow-xs border-b-2 border-b-[#d4af37] dark:border-b-[#b5942b] font-bold"
+                : "text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200 font-medium"
             }`}
           >
             <span>[✨ Polished Note]</span>
@@ -1369,16 +1258,11 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
             }}
             className={`flex-1 shrink-0 px-4 py-2 rounded-lg text-xs font-display flex items-center justify-center gap-1.5 transition-all cursor-pointer relative ${
               activeTab === "chat"
-                ? "bg-white text-[#d88c6e] shadow-xs border border-[#ebdccb]/30 font-bold"
-                : "text-neutral-500 hover:text-neutral-700 font-medium"
+                ? "bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100 shadow-xs border-b-2 border-b-[#d4af37] dark:border-b-[#b5942b] font-bold"
+                : "text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200 font-medium"
             }`}
           >
             <span>[💬 Chat with Oli]</span>
-            {engineMode === "native" && (
-              <span className="absolute -top-1.5 -right-1 bg-green-500 text-[8px] text-white px-1.5 py-0.2 rounded-full font-sans select-none scale-75 animate-bounce">
-                NATIVE
-              </span>
-            )}
           </button>
         </div>
 
@@ -1390,8 +1274,8 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                 <h2 id="desktop-heading" className="font-display font-semibold text-xs text-neutral-700 uppercase tracking-wide">
                   Personal Workspace
                 </h2>
-                {activeHistoryNoteId && (
-                  <span className="text-[9px] bg-[#d88c6e]/10 text-[#d88c6e] border border-[#d88c6e]/35 px-2 py-0.5 rounded-full font-mono font-medium">
+            {activeHistoryNoteId && (
+                  <span className="text-[9px] bg-sky-50 text-sky-700 border border-sky-200 px-2 py-0.5 rounded-full font-mono font-medium">
                     Active Archive Note
                   </span>
                 )}
@@ -1400,7 +1284,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                 <button
                   id="inject-sample-cozy"
                   onClick={injectSample}
-                  className="text-[11px] font-display font-semibold text-neutral-500 hover:text-[#d88c6e] transition-colors flex items-center gap-1"
+                  className="text-[11px] font-display font-semibold text-neutral-500 hover:text-[#d4af37] dark:text-neutral-400 dark:hover:text-[#b5942b] transition-colors flex items-center gap-1"
                 >
                   <Layers className="w-3 h-3" />
                   <span className="hidden sm:inline">Inject Raw Messy Notes</span>
@@ -1426,8 +1310,8 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                   }}
                   className={`h-8 px-4 rounded-lg font-display font-bold text-xs transition-all shadow-xs active:scale-[0.98] flex items-center justify-center gap-1.5 cursor-pointer relative overflow-hidden ${
                     isProcessing
-                      ? "bg-neutral-100 text-neutral-400 border border-[#ebdccb] cursor-not-allowed"
-                      : "bg-[#d88c6e] text-white border border-[#d88c6e] hover:bg-[#c37c5f]"
+                      ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-400 border border-neutral-200 dark:border-neutral-700 cursor-not-allowed"
+                      : "bg-[#d4af37] text-white border border-[#d4af37] hover:bg-[#b09030]"
                   } ${rippleActive ? "animate-gold-ripple" : ""}`}
                 >
                   {isProcessing ? (
@@ -1437,7 +1321,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                     </>
                   ) : (
                     <>
-                      <Sparkles className="w-3.5 h-3.5 text-orange-200 shrink-0" />
+                      <Sparkles className="w-3.5 h-3.5 text-neutral-300 dark:text-neutral-600 shrink-0" />
                       <span className="font-semibold text-xs font-display">✨ Ask Oli</span>
                     </>
                   )}
@@ -1446,20 +1330,20 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
             </div>
 
         {/* ELEMENT 2: Main Input Text Box (Comfortable writing block) */}
-        <div id="main-input-card" className="flex-1 min-h-[140px] flex flex-col bg-white border border-[#ebdccb] rounded-xl p-3 shadow-xs focus-within:border-[#d88c6e] transition-colors relative overflow-hidden">
+        <div id="main-input-card" className="flex-1 min-h-[140px] flex flex-col bg-white border border-neutral-200 rounded-xl p-3 shadow-xs focus-within:border-[#d4af37] focus-within:ring-1 focus-within:ring-[#d4af37] transition-colors relative overflow-hidden">
           <textarea
             id="raw-note-textarea"
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             disabled={isProcessing}
             placeholder="Pour your chaotic raw thoughts here... No formatting, no pressure. Let Oli gather the signals, organize the chaos, and craft the archives."
-            className="w-full h-full flex-1 p-2 font-sans text-neutral-800 text-sm md:text-base leading-relaxed bg-white border-none resize-none outline-none focus:ring-0 placeholder:text-gray-300 placeholder:italic disabled:opacity-60 disabled:cursor-not-allowed"
+            className="w-full h-full flex-1 p-2 font-sans text-stone-950 text-sm md:text-base leading-relaxed bg-white border-none resize-none outline-none focus:ring-0 placeholder:text-gray-400 placeholder:italic disabled:opacity-60 disabled:cursor-not-allowed caret-stone-900"
           />
         </div>
 
             {/* Bottom Actions Utility strip for Edit view */}
-            <div id="cozy-edit-bottom-actions-dock" className="flex items-center justify-between gap-3 shrink-0 select-none pb-1.5 border-t border-[#ebdccb]/30 pt-3">
-              <div id="dock-text-metrics" className="text-[10px] font-mono text-neutral-400 flex items-center gap-2">
+            <div id="cozy-edit-bottom-actions-dock" className="flex items-center justify-between gap-3 shrink-0 select-none pb-1.5 border-t border-neutral-200 dark:border-neutral-800 pt-3">
+              <div id="dock-text-metrics" className="text-[10px] font-mono text-neutral-400 dark:text-neutral-500 flex items-center gap-2">
                 <span>{inputText.length} CHARS</span>
                 <span className="text-neutral-200">|</span>
                 <span>{inputText.trim() ? inputText.trim().split(/\s+/).length : 0} WORDS</span>
@@ -1471,7 +1355,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                   id="scratchpad-save-disk-btn"
                   onClick={exportScratchpadToLocalDisk}
                   disabled={!inputText.trim()}
-                  className="h-9 px-3 rounded-lg bg-white border border-[#ebdccb] text-neutral-600 hover:text-[#d88c6e] transition-colors flex items-center justify-center gap-1 text-[11px] font-display font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="h-9 px-3 rounded-lg bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:text-[#d4af37] dark:hover:text-[#b5942b] transition-colors flex items-center justify-center gap-1 text-[11px] font-display font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Save raw scratchpad note as markdown file"
                 >
                   <Download className="w-3.5 h-3.5" />
@@ -1483,7 +1367,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                   id="scratchpad-clipboard-btn"
                   onClick={handleCopyScratchpad}
                   disabled={!inputText.trim()}
-                  className="w-9 h-9 rounded-lg bg-[#faf6f0] hover:bg-[#eae1d4] border border-[#ebdccb] text-[#d88c6e] hover:border-orange-400 transition-colors flex items-center justify-center cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-9 h-9 rounded-lg bg-white dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 border border-neutral-200 dark:border-neutral-700 text-stone-900 dark:text-stone-100 hover:border-[#d4af37] transition-colors flex items-center justify-center cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Copy raw text to clipboard"
                 >
                   {copiedType === "scratchpad" ? (
@@ -1497,10 +1381,10 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                   id="cozy-commit-logs-btn-edit"
                   onClick={saveToHistory}
                   disabled={!inputText.trim()}
-                  className="h-9 px-3 rounded-lg bg-neutral-800 hover:bg-neutral-950 text-white text-[11px] font-display font-semibold flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="h-9 px-3 rounded-lg bg-neutral-800 dark:bg-stone-100 hover:bg-neutral-950 dark:hover:bg-white text-white dark:text-stone-900 border border-transparent dark:border-[#b5942b] text-[11px] font-display font-semibold flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Save current raw work to Local logs"
                 >
-                  <Plus className="w-3.5 h-3.5 pointer-events-none text-orange-300" />
+                  <Plus className="w-3.5 h-3.5 pointer-events-none text-neutral-400 dark:text-neutral-500" />
                   <span className="hidden sm:inline">Archive Note</span>
                 </button>
               </div>
@@ -1513,8 +1397,8 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
             {/* Output Format Toggles */}
             <div id="cozy-output-format-toggles" className="flex items-center justify-between shrink-0 select-none px-1">
               <div className="flex items-center gap-2">
-                <span className="text-xs font-mono font-semibold text-neutral-400 uppercase tracking-widest">Format:</span>
-                <div className="bg-[#eae1d5]/45 border border-[#ebdccb]/60 p-0.5 rounded-lg flex gap-1">
+                <span className="text-xs font-mono font-semibold text-neutral-400 dark:text-neutral-500 uppercase tracking-widest">Format:</span>
+                <div className="bg-stone-50 dark:bg-stone-900 border border-neutral-200 dark:border-neutral-700 p-0.5 rounded-lg flex gap-1">
                   <button
                     id="toggle-format-plain"
                     onClick={() => {
@@ -1523,8 +1407,8 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                     }}
                     className={`px-3 py-1 text-xs font-display font-bold rounded-md transition-all cursor-pointer ${
                       outputTab === "raw"
-                        ? "bg-white text-neutral-800 shadow-xs border border-[#ebdccb]/40 font-bold"
-                        : "text-neutral-400 hover:text-neutral-600 font-medium"
+                        ? "bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100 shadow-xs border border-neutral-200 dark:border-neutral-700 font-bold"
+                        : "text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200 font-medium"
                     }`}
                   >
                     Plain Text
@@ -1537,8 +1421,8 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                     }}
                     className={`px-3 py-1 text-xs font-display font-bold rounded-md transition-all cursor-pointer ${
                       outputTab === "preview"
-                        ? "bg-white text-neutral-800 shadow-xs border border-[#ebdccb]/40 font-bold"
-                        : "text-neutral-400 hover:text-neutral-600 font-medium"
+                        ? "bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100 shadow-xs border border-neutral-200 dark:border-neutral-700 font-bold"
+                        : "text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200 font-medium"
                     }`}
                   >
                     Markdown
@@ -1547,30 +1431,30 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
               </div>
 
               <div className="text-[10px] font-mono text-neutral-400 flex items-center gap-1.5 uppercase">
-                <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? "bg-green-500 animate-pulse" : "bg-orange-400"}`}></span>
-                <span>{engineMode === "cloud" ? "Hybrid Engine Online" : "WebGPU local cached"}</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                <span>Offline-First WebGPU Core</span>
               </div>
             </div>
 
             {/* Dynamic Output Box */}
-            <div id="cozy-dynamic-output-card" className="flex-1 min-h-[140px] flex flex-col bg-white border border-[#ebdccb] rounded-xl overflow-hidden shadow-xs relative">
-              <div ref={outputSectionRef} id="cozy-output-scroll" className="flex-1 p-4 md:p-5 overflow-y-auto bg-[#fdfbf8]">
+            <div id="cozy-dynamic-output-card" className="flex-1 min-h-[140px] flex flex-col bg-white border border-neutral-200 rounded-xl overflow-hidden shadow-xs relative">
+              <div ref={outputSectionRef} id="cozy-output-scroll" className="flex-1 p-4 md:p-5 overflow-y-auto bg-white">
                 {isProcessing ? (
                   <div className="h-full flex flex-col items-center justify-center gap-3 text-center text-neutral-400 py-6 animate-pulse">
-                    <div className="w-6 h-6 border-2 border-[#d88c6e] border-t-transparent rounded-full animate-spin"></div>
-                    <p className="font-mono text-xs font-bold uppercase tracking-wider text-[#d88c6e]">{processingPhase}</p>
+                    <div className="w-6 h-6 border-2 border-[#d4af37] border-t-transparent rounded-full animate-spin"></div>
+                    <p className="font-mono text-xs font-bold uppercase tracking-wider text-sky-700">{processingPhase}</p>
                   </div>
                 ) : outputText ? (
                   outputTab === "preview" ? (
                     <div
                       id="rendered-preview-markdown"
-                      className="prose prose-neutral max-w-none text-neutral-800 leading-relaxed font-sans break-words text-sm md:text-base/relaxed"
+                      className="prose prose-neutral max-w-none text-stone-950 leading-relaxed font-sans break-words text-sm md:text-base/relaxed"
                       dangerouslySetInnerHTML={{ __html: convertMarkdownToHtml(outputText) }}
                     />
                   ) : (
                     <pre
                       id="raw-markdown-block"
-                      className="font-mono text-xs md:text-sm text-neutral-600 whitespace-pre-wrap leading-relaxed select-text"
+                      className="font-mono text-xs md:text-sm text-stone-950 whitespace-pre-wrap leading-relaxed select-text"
                     >
                       {outputText}
                     </pre>
@@ -1586,7 +1470,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
             </div>
 
             {/* Bottom Actions Dock for Output view */}
-            <div id="cozy-output-bottom-actions-dock" className="flex items-center justify-between gap-3 shrink-0 select-none pb-1.5 border-t border-[#ebdccb]/30 pt-3">
+            <div id="cozy-output-bottom-actions-dock" className="flex items-center justify-between gap-3 shrink-0 select-none pb-1.5 border-t border-neutral-200 dark:border-neutral-700 pt-3">
               <div className="text-[10px] font-mono text-neutral-400 flex items-center gap-2">
                 <span>OUTPUT: {outputText ? outputText.length : 0} CHARS</span>
               </div>
@@ -1598,7 +1482,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                   id="cozy-save-disk-btn"
                   onClick={exportToLocalDisk}
                   disabled={!outputText}
-                  className="h-9 px-3 rounded-lg bg-white border border-[#ebdccb] text-neutral-600 hover:text-[#d88c6e] transition-colors flex items-center justify-center gap-1 text-[11px] font-display font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="h-9 px-3 rounded-lg bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:text-[#d4af37] dark:hover:text-[#b5942b] transition-colors flex items-center justify-center gap-1 text-[11px] font-display font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Save formatted note as markdown file"
                 >
                   <Download className="w-3.5 h-3.5" />
@@ -1610,7 +1494,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                   id="cozy-clipboard-btn"
                   onClick={handleCopyRichText}
                   disabled={!outputText}
-                  className="w-9 h-9 rounded-lg bg-[#faf6f0] hover:bg-[#eae1d4] border border-[#ebdccb] text-[#d88c6e] hover:border-orange-400 transition-colors flex items-center justify-center cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-9 h-9 rounded-lg bg-white dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 border border-neutral-200 dark:border-neutral-700 text-stone-900 dark:text-stone-100 hover:border-[#d4af37] transition-colors flex items-center justify-center cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Copy rich rendered formatting directly into Apple Notes or Obsidian"
                 >
                   {copiedType === "rich" ? (
@@ -1625,10 +1509,10 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                   id="cozy-commit-logs-btn"
                   onClick={saveToHistory}
                   disabled={!outputText}
-                  className="h-9 px-3 rounded-lg bg-neutral-800 hover:bg-neutral-950 text-white text-[11px] font-display font-semibold flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="h-9 px-3 rounded-lg bg-neutral-800 dark:bg-stone-100 hover:bg-neutral-950 dark:hover:bg-white text-white dark:text-stone-900 border border-transparent dark:border-[#b5942b] text-[11px] font-display font-semibold flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Save current raw work to Local logs"
                 >
-                  <Plus className="w-3.5 h-3.5 pointer-events-none text-orange-300" />
+                  <Plus className="w-3.5 h-3.5 pointer-events-none text-neutral-400 dark:text-neutral-500" />
                   <span className="hidden sm:inline">Archive Note</span>
                 </button>
               </div>
@@ -1641,17 +1525,17 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
       <div id="cozy-chat-container" className={`flex-1 flex flex-col min-h-[420px] overflow-hidden ${
         chatInitiated 
           ? "bg-transparent border-none p-0 shadow-none -mx-4 w-[calc(100%+2rem)]" 
-          : "bg-[#fdfbf6] border border-[#ebdccb] rounded-2xl p-4 shadow-xs"
+          : "bg-white dark:bg-stone-900 border border-neutral-200 dark:border-neutral-700 rounded-2xl p-4 shadow-xs"
       }`}>
         
         {!chatInitiated ? (
           <div id="chat-uninitiated-welcome" className="flex-1 flex flex-col items-center justify-center text-center p-6 space-y-6 max-w-sm mx-auto my-auto pb-8">
-            <div className="bg-[#d88c6e]/10 p-4 rounded-full select-none">
-              <Sparkles className="w-8 h-8 text-[#d88c6e]" />
+            <div className="bg-sky-50 dark:bg-sky-950 p-4 rounded-full select-none">
+              <Sparkles className="w-8 h-8 text-sky-600 dark:text-sky-400" />
             </div>
             
             <div className="space-y-2 select-none">
-              <h3 className="font-display font-bold text-base text-neutral-800">
+              <h3 className="font-display font-bold text-base text-stone-950 dark:text-stone-100">
                 Chat with Oli
               </h3>
               <p className="text-xs text-neutral-500 leading-relaxed font-sans">
@@ -1663,7 +1547,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
               <button
                 id="init-just-chat-btn"
                 onClick={() => handleInitChat("default")}
-                className="py-3 px-2 bg-white hover:bg-[#d88c6e]/5 border border-[#ebdccb] hover:border-[#d88c6e] rounded-xl font-display font-bold text-xs select-none text-neutral-800 transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs hover:shadow-sm"
+                className="py-3 px-2 bg-white dark:bg-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-700 border border-neutral-200 dark:border-neutral-700 hover:border-[#d4af37] dark:hover:border-[#b5942b] rounded-xl font-display font-bold text-xs select-none text-neutral-800 dark:text-neutral-100 transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs hover:shadow-sm"
               >
                 <span className="select-none">💬</span> Just Chat
               </button>
@@ -1671,7 +1555,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
               <button
                 id="init-booster-btn"
                 onClick={() => handleInitChat("booster")}
-                className="py-3 px-2 bg-white hover:bg-[#d88c6e]/5 border border-[#ebdccb] hover:border-[#d88c6e] rounded-xl font-display font-bold text-xs select-none text-neutral-800 transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs hover:shadow-sm"
+                className="py-3 px-2 bg-white dark:bg-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-700 border border-neutral-200 dark:border-neutral-700 hover:border-[#d4af37] dark:hover:border-[#b5942b] rounded-xl font-display font-bold text-xs select-none text-neutral-800 dark:text-neutral-100 transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs hover:shadow-sm"
               >
                 <span className="select-none">🚀</span> Booster
               </button>
@@ -1679,7 +1563,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
               <button
                 id="init-randomizer-btn"
                 onClick={() => handleInitChat("randomizer")}
-                className="py-3 px-2 bg-white hover:bg-[#d88c6e]/5 border border-[#ebdccb] hover:border-[#d88c6e] rounded-xl font-display font-bold text-xs select-none text-neutral-800 transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs hover:shadow-sm"
+                className="py-3 px-2 bg-white dark:bg-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-700 border border-neutral-200 dark:border-neutral-700 hover:border-[#d4af37] dark:hover:border-[#b5942b] rounded-xl font-display font-bold text-xs select-none text-neutral-800 dark:text-neutral-100 transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs hover:shadow-sm"
               >
                 <span className="select-none">🎲</span> Randomizer
               </button>
@@ -1687,7 +1571,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
               <button
                 id="init-brainstormer-btn"
                 onClick={() => handleInitChat("brainstormer")}
-                className="py-3 px-2 bg-white hover:bg-[#d88c6e]/5 border border-[#ebdccb] hover:border-[#d88c6e] rounded-xl font-display font-bold text-xs select-none text-neutral-800 transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs hover:shadow-sm"
+                className="py-3 px-2 bg-white dark:bg-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-700 border border-neutral-200 dark:border-neutral-700 hover:border-[#d4af37] dark:hover:border-[#b5942b] rounded-xl font-display font-bold text-xs select-none text-neutral-800 dark:text-neutral-100 transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs hover:shadow-sm"
               >
                 <span className="select-none">🧠</span> Brainstormer
               </button>
@@ -1696,10 +1580,10 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
         ) : (
           <>
             {/* Header / Mindset Banner */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-[#ebdccb]/35 pb-2.5 mb-3 gap-2 text-xs font-mono select-none px-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-neutral-200 dark:border-neutral-700 pb-2.5 mb-3 gap-2 text-xs font-mono select-none px-4">
               <div className="flex items-center gap-2 shrink-0">
-                <span className="w-2 h-2 rounded-full bg-[#d88c6e] animate-pulse"></span>
-                <span className="font-semibold text-[#1d1d1f]">Oli's Mindset:</span>
+                <span className="w-2 h-2 rounded-full bg-sky-500 animate-pulse"></span>
+                <span className="font-semibold text-stone-950 dark:text-stone-100">Oli's Mindset:</span>
               </div>
               <div id="chat-mindset-pill-select" className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0 scrollbar-none">
                 <button
@@ -1707,8 +1591,8 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                   onClick={() => handleInitChat("default")}
                   className={`px-2 py-1 rounded-md text-[10px] font-sans font-bold transition-all border shrink-0 cursor-pointer ${
                     mindset === "default"
-                      ? "bg-[#d88c6e] text-white border-[#d88c6e]"
-                      : "bg-white text-neutral-650 border-[#ebdccb] hover:bg-neutral-50"
+                      ? "bg-sky-50 dark:bg-sky-950 text-sky-700 dark:text-sky-400 border-sky-200 dark:border-sky-800"
+                      : "bg-white dark:bg-neutral-800 text-neutral-650 dark:text-neutral-300 border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-700"
                   }`}
                 >
                   💬 Just Chat
@@ -1718,8 +1602,8 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                   onClick={() => handleInitChat("booster")}
                   className={`px-2 py-1 rounded-md text-[10px] font-sans font-bold transition-all border shrink-0 cursor-pointer ${
                     mindset === "booster"
-                      ? "bg-[#d88c6e] text-white border-[#d88c6e]"
-                      : "bg-white text-neutral-650 border-[#ebdccb] hover:bg-neutral-50"
+                      ? "bg-sky-50 dark:bg-sky-950 text-sky-700 dark:text-sky-400 border-sky-200 dark:border-sky-800"
+                      : "bg-white dark:bg-neutral-800 text-neutral-650 dark:text-neutral-300 border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-700"
                   }`}
                 >
                   🚀 Booster
@@ -1729,8 +1613,8 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                   onClick={() => handleInitChat("randomizer")}
                   className={`px-2 py-1 rounded-md text-[10px] font-sans font-bold transition-all border shrink-0 cursor-pointer ${
                     mindset === "randomizer"
-                      ? "bg-[#d88c6e] text-white border-[#d88c6e]"
-                      : "bg-white text-neutral-650 border-[#ebdccb] hover:bg-neutral-50"
+                      ? "bg-sky-50 dark:bg-sky-950 text-sky-700 dark:text-sky-400 border-sky-200 dark:border-sky-800"
+                      : "bg-white dark:bg-neutral-800 text-neutral-650 dark:text-neutral-300 border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-700"
                   }`}
                 >
                   🎲 Randomizer
@@ -1740,8 +1624,8 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                   onClick={() => handleInitChat("brainstormer")}
                   className={`px-2 py-1 rounded-md text-[10px] font-sans font-bold transition-all border shrink-0 cursor-pointer ${
                     mindset === "brainstormer"
-                      ? "bg-[#d88c6e] text-white border-[#d88c6e]"
-                      : "bg-white text-neutral-650 border-[#ebdccb] hover:bg-[#d88c6e]/10"
+                      ? "bg-sky-50 dark:bg-sky-950 text-sky-700 dark:text-sky-400 border-sky-200 dark:border-sky-800"
+                      : "bg-white dark:bg-neutral-800 text-neutral-650 dark:text-neutral-300 border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-700"
                   }`}
                 >
                   🧠 Brainstormer
@@ -1761,13 +1645,13 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                 >
                   {msg.sender === "user" ? (
                     <div
-                      className="p-3 rounded-2xl text-xs md:text-sm leading-relaxed whitespace-pre-wrap bg-[#d88c6e] text-white rounded-br-none font-sans shadow-2xs"
+                      className="p-3 text-xs md:text-sm leading-relaxed whitespace-pre-wrap bg-transparent text-stone-900 dark:text-stone-100 font-sans"
                     >
                       {msg.text}
                     </div>
                   ) : (
                     <div
-                      className="w-full text-neutral-800 font-sans text-xs md:text-sm leading-relaxed prose prose-sm max-w-none pt-1 pb-1"
+                      className="w-full bg-sky-50 dark:bg-sky-950/40 p-4 rounded-xl text-stone-900 dark:text-stone-100 font-sans text-xs md:text-sm leading-relaxed prose prose-sm max-w-none shadow-xs"
                       dangerouslySetInnerHTML={{ __html: convertMarkdownToHtml(msg.text) }}
                     />
                   )}
@@ -1777,7 +1661,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                     {msg.meta && (
                       <>
                         <span>•</span>
-                        <span className="text-[#d88c6e] font-semibold">{msg.meta}</span>
+                        <span className="text-sky-700 dark:text-sky-400 font-semibold">{msg.meta}</span>
                       </>
                     )}
                   </div>
@@ -1787,17 +1671,17 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
               {chatIsResponding && (
                 <div className="flex flex-col mr-auto items-start w-full animate-pulse py-2">
                   <div className="text-xs text-neutral-400 flex items-center gap-2 font-mono">
-                    <div className="w-1.5 h-1.5 bg-[#d88c6e] rounded-full animate-bounce"></div>
-                    <div className="w-1.5 h-1.5 bg-[#d88c6e] rounded-full animate-bounce" style={{ animationDelay: "0.2s" }}></div>
-                    <div className="w-1.5 h-1.5 bg-[#d88c6e] rounded-full animate-bounce" style={{ animationDelay: "0.4s" }}></div>
-                    <span className="text-[10px] uppercase tracking-wider text-[#d88c6e] ml-1 font-semibold">Oli is formulating thoughts...</span>
+                    <div className="w-1.5 h-1.5 bg-sky-200 rounded-full animate-bounce"></div>
+                    <div className="w-1.5 h-1.5 bg-sky-200 rounded-full animate-bounce" style={{ animationDelay: "0.2s" }}></div>
+                    <div className="w-1.5 h-1.5 bg-sky-200 rounded-full animate-bounce" style={{ animationDelay: "0.4s" }}></div>
+                    <span className="text-[10px] uppercase tracking-wider text-neutral-500 ml-1 font-semibold">Oli is formulating thoughts...</span>
                   </div>
                 </div>
               )}
             </div>
 
             {/* Low-profile Utility Panel (Clipboard / Export / State Storage) */}
-            <div id="chat-utility-panel" className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 mt-2 border-t border-[#ebdccb]/35 text-[10px] font-mono text-neutral-400 select-none">
+            <div id="chat-utility-panel" className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 mt-2 border-t border-neutral-200 dark:border-neutral-700 text-[10px] font-mono text-neutral-400 select-none">
               <div className="flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
                 <span>Session auto-cached</span>
@@ -1806,7 +1690,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                 <button
                   id="chat-btn-copy-logs"
                   onClick={handleCopyChatLogs}
-                  className="px-2 py-1 bg-white hover:bg-[#d88c6e]/5 border border-[#ebdccb] hover:border-[#d88c6e] hover:text-[#d88c6e] rounded-md transition-all flex items-center gap-1 cursor-pointer font-semibold text-neutral-700 active:scale-95 shadow-3xs"
+                  className="px-2 py-1 bg-white dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 border border-neutral-200 dark:border-neutral-700 hover:border-[#d4af37] dark:hover:border-[#b5942b] rounded-md transition-all flex items-center gap-1 cursor-pointer font-semibold text-neutral-700 dark:text-neutral-300 active:scale-95 shadow-3xs"
                   title="Copy session logs directly as Markdown"
                 >
                   <span>📋 Copy Logs</span>
@@ -1814,7 +1698,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                 <button
                   id="chat-btn-save-file"
                   onClick={handleSaveChatFile}
-                  className="px-2 py-1 bg-white hover:bg-[#d88c6e]/5 border border-[#ebdccb] hover:border-[#d88c6e] hover:text-[#d88c6e] rounded-md transition-all flex items-center gap-1 cursor-pointer font-semibold text-neutral-700 active:scale-95 shadow-3xs"
+                  className="px-2 py-1 bg-white dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 border border-neutral-200 dark:border-neutral-700 hover:border-[#d4af37] dark:hover:border-[#b5942b] rounded-md transition-all flex items-center gap-1 cursor-pointer font-semibold text-neutral-700 dark:text-neutral-300 active:scale-95 shadow-3xs"
                   title="Export session logs as markdown file"
                 >
                   <span>💾 Save File</span>
@@ -1831,7 +1715,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
             </div>
 
             {/* Input Dock */}
-            <div id="chat-input-bar-container" className="border-t border-[#ebdccb]/55 pt-3 mt-1.5 flex gap-2 shrink-0 px-4 pb-1">
+            <div id="chat-input-bar-container" className="border-t border-neutral-200 dark:border-neutral-700 pt-3 mt-1.5 flex gap-2 shrink-0 px-4 pb-1">
               <input
                 id="chat-input-field"
                 type="text"
@@ -1844,16 +1728,16 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                 }}
                 disabled={chatIsResponding}
                 placeholder={`Ask Oli anything... (${mindset} persona operating mode active)`}
-                className="flex-1 px-3.5 py-2.5 border border-[#ebdccb] rounded-xl text-sm bg-white focus:outline-none focus:border-[#d88c6e] placeholder:text-gray-300 transition-colors"
+                className="flex-1 px-3.5 py-2.5 border border-neutral-200 dark:border-neutral-700 rounded-xl text-sm bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-1 focus:ring-[#d4af37] dark:focus:ring-[#b5942b] focus:border-[#d4af37] dark:focus:border-[#b5942b] placeholder:text-gray-400 dark:placeholder:text-gray-500 transition-colors"
               />
               <button
                 id="chat-send-msg-btn"
                 onClick={sendChatMessage}
                 disabled={!chatInput.trim() || chatIsResponding}
-                className={`p-2.5 px-4 rounded-xl font-display font-medium text-xs flex items-center gap-1.5 hover:shadow-xs transition-colors active:scale-95 ${
+                className={`p-2.5 px-4 rounded-xl font-display font-medium text-xs flex items-center gap-1.5 hover:shadow-xs transition-colors active:scale-95 border ${
                   !chatInput.trim() || chatIsResponding
-                    ? "bg-neutral-100 text-neutral-400 border border-[#ebdccb]"
-                    : "bg-[#d88c6e] text-white hover:bg-[#c37c5f]"
+                    ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-400 dark:text-neutral-500 border-neutral-200 dark:border-neutral-700"
+                    : "bg-stone-100 dark:bg-stone-800 border-[#d4af37] dark:border-[#b5942b] text-stone-900 dark:text-stone-100 hover:bg-stone-200 dark:hover:bg-stone-700"
                 }`}
               >
                 <Send className="w-3.5 h-3.5" />
@@ -1866,345 +1750,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
       </div>
     )}
 
-    {false && (
-      <div id="tab-content-ask" className="flex-1 flex flex-col justify-between gap-4 overflow-y-auto pr-1 bg-transparent animate-fade-in p-1 select-text">
-        {/* Header section with Oliver icon */}
-        <div className="bg-[#fcfaf7] border border-[#ebdccb]/80 rounded-2xl p-4 flex gap-3 items-center shadow-2xs select-none">
-          <div className="bg-[#d88c6e]/10 p-2.5 rounded-full text-center text-xl shrink-0">
-            🐾
-          </div>
-          <div className="space-y-0.5">
-            <h3 className="font-display font-bold text-sm text-neutral-850">
-              Transformation Settings
-            </h3>
-            <p className="text-xs text-neutral-400 leading-normal font-sans">
-              Fine-tune Oliver's on-device brain cores, linguistic tone gradients, and specific structured templates.
-            </p>
-          </div>
-        </div>
 
-        {/* Selection Sections Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          
-          {/* Left Column: Intelligence Engine Core */}
-          <div className="bg-white border border-[#ebdccb] rounded-2xl p-4 space-y-4 shadow-3xs">
-            <div className="space-y-2">
-              <label className="text-xs font-mono font-bold uppercase tracking-wider text-neutral-500 flex items-center justify-between">
-                <span>Transformation Core</span>
-                {engineMode === "native" && (
-                  <span className="text-[9px] text-green-600 bg-green-50 px-1.5 py-0.5 rounded border border-green-200 font-bold uppercase tracking-normal animate-pulse">
-                    SYSTEM PHYSICAL
-                  </span>
-                )}
-              </label>
-
-              <div className="grid grid-cols-3 bg-[#eae1d5]/45 p-1 rounded-xl text-[10px] font-mono border border-[#ebdccb] gap-1 select-none">
-                <button
-                  id="engine-native-btn"
-                  onClick={() => {
-                    playClick("click");
-                    setEngineMode("native");
-                    showToast("Connected to system native hardware coprocessor.", "info");
-                  }}
-                  className={`py-2 px-1 rounded-lg text-center transition-all cursor-pointer relative font-bold ${
-                    engineMode === "native"
-                      ? "bg-white text-[#d88c6e] shadow-xs border border-[#ebdccb]/30"
-                      : "text-neutral-500 hover:text-neutral-750"
-                  }`}
-                  title="Direct binding to Google AICore or native local web intelligence API"
-                >
-                  Native
-                  {hasNativeApi && (
-                    <span className="absolute top-0 right-0 w-2 h-2 rounded-full bg-green-500 border border-white"></span>
-                  )}
-                </button>
-
-                <button
-                  id="engine-sandbox-btn"
-                  onClick={() => {
-                    playClick("click");
-                    setEngineMode("sandbox");
-                    warmLocalLlm(false);
-                  }}
-                  className={`py-2 px-1 rounded-lg text-center transition-all cursor-pointer font-bold ${
-                    engineMode === "sandbox"
-                      ? "bg-white text-[#d88c6e] shadow-xs border border-[#ebdccb]/30"
-                      : "text-neutral-500 hover:text-neutral-750"
-                  }`}
-                  title="Downloads/allocates quantized models via WebGPU"
-                >
-                  Sandbox
-                </button>
-
-                <button
-                  id="engine-cloud-btn"
-                  onClick={() => {
-                    playClick("click");
-                    if (!isOnline) {
-                      showToast("No active connection. Cloud hybrid mode requires network connectivity.", "error");
-                      return;
-                    }
-                    setEngineMode("cloud");
-                  }}
-                  className={`py-2 px-1 rounded-lg text-center transition-all cursor-pointer font-bold ${
-                    engineMode === "cloud"
-                      ? "bg-white text-[#d88c6e] shadow-xs border border-[#ebdccb]/30"
-                      : "text-neutral-500 hover:text-neutral-750"
-                  }`}
-                  title="Cloud Gemini secure API endpoints proxied server-side"
-                >
-                  Cloud
-                </button>
-              </div>
-            </div>
-
-            {/* Sub-engine content */}
-            <div className="bg-[#fcfaf7] rounded-xl p-3 border border-[#ebdccb]/60">
-              {engineMode === "native" && (
-                <div className="space-y-1.5 text-[11px] text-neutral-500 leading-normal">
-                  <p>Hardware diagnostics: checked for native AICore or neural engine presence.</p>
-                  <p className="font-mono text-[9px] text-neutral-450 font-bold uppercase">
-                    STATUS: {hasNativeApi ? "🟢 AICore detected" : "Simulated via secure proxy fallback"}
-                  </p>
-                </div>
-              )}
-
-              {engineMode === "sandbox" && (
-                <div className="space-y-2.5 text-[11px] text-neutral-500 font-sans leading-normal">
-                  <p>Sandbox Vault downloads and runs quantized weights in browser storage, offline without servers.</p>
-                  
-                  <div className="flex flex-col gap-1.5 mt-1">
-                    <label className="text-[10px] font-mono font-bold text-neutral-400 uppercase tracking-wide">
-                      Model Weights:
-                    </label>
-                    <div className="relative">
-                      <select
-                        id="model-profile-selector"
-                        value={selectedLlmModel}
-                        disabled={localLlmStatus === "loading"}
-                        onChange={async (e) => {
-                          playClick("click");
-                          const newModelId = e.target.value;
-                          setSelectedLlmModel(newModelId);
-                          setLocalLlmStatus("idle");
-                          setUseActualLlm(false);
-                          const { setActiveModelId } = await import("./utils/webLlmEngine");
-                          setActiveModelId(newModelId);
-                          showToast(`Switched active local model. Press 'prepare sandboxed weights' below to warm it up.`, "info");
-                        }}
-                        className="w-full p-2 bg-white border border-[#ebdccb] rounded-lg text-xs font-display font-medium text-[#1d1d1f] focus:outline-none focus:border-[#d88c6e] appearance-none cursor-pointer pr-10 border-neutral-300"
-                      >
-                        <option value="Qwen2.5-0.5B-Instruct-q4f16_1-MLC">⚡ Qwen 2.5 0.5B (Ultra-Light, ~350MB VRAM)</option>
-                        <option value="gemma-2-2b-it-q4f16_1-MLC">🦁 Gemma 2 2B (Powerhouse, ~1.43GB VRAM)</option>
-                        <option value="SmolLM2-360M-Instruct-q4f16_1-MLC">🌸 SmolLM2 360M (Feather-Weight, ~240MB VRAM)</option>
-                      </select>
-                      <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-gray-400">
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
-                        </svg>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between font-mono text-[10px] font-bold">
-                    <span>WebGPU Weights:</span>
-                    <span className={localLlmStatus === "ready" ? "text-green-600" : "text-amber-600 animate-pulse"}>
-                      {localLlmStatus === "ready" ? "READY" : localLlmStatus === "loading" ? "DOWNLOADING" : "NOT PREPARED"}
-                    </span>
-                  </div>
-
-                  {localLlmStatus === "loading" && (
-                    <div className="space-y-1.5 mt-1">
-                      <div className="w-full bg-neutral-200 h-1.5 rounded-full overflow-hidden">
-                        <div className="h-full bg-[#d88c6e] transition-all duration-300" style={{ width: `${llmProgress * 100}%` }}></div>
-                      </div>
-                      <p className="text-[10px] text-orange-600 font-mono animate-pulse">{llmProgressMsg}</p>
-                    </div>
-                  )}
-
-                  {localLlmStatus !== "loading" && (
-                    <div className="pt-1">
-                      {localLlmStatus === "ready" ? (
-                        <button
-                          id="unload-weights-btn"
-                          type="button"
-                          onClick={async () => {
-                            playClick("click");
-                            try {
-                              const { unloadWebLlmEngine } = await import("./utils/webLlmEngine");
-                              await unloadWebLlmEngine();
-                              setLocalLlmStatus("idle");
-                              setUseActualLlm(false);
-                              showToast("Weights unloaded properly. GPU memory released.", "success");
-                            } catch (err: any) {
-                              showToast("Failed to unload weights correctly.", "error");
-                            }
-                          }}
-                          className="w-full py-1.5 bg-red-50 hover:bg-red-100 text-red-700 rounded-lg text-[9px] font-mono uppercase font-bold tracking-wider transition-colors cursor-pointer border border-red-200 text-center"
-                        >
-                          Release GPU Memory Weights
-                        </button>
-                      ) : (
-                        <button
-                          id="prep-sandbox-btn"
-                          type="button"
-                          onClick={() => {
-                            playClick("click");
-                            warmLocalLlm(true);
-                          }}
-                          className="w-full py-1.5 bg-[#d88c6e]/10 hover:bg-[#d88c6e]/20 text-[#d88c6e] border border-[#d88c6e]/30 rounded-lg text-[10px] font-mono font-semibold transition-colors cursor-pointer text-center"
-                        >
-                          prepare sandboxed weights
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {engineMode === "cloud" && (
-                <div className="space-y-1 text-[11px] text-neutral-500 leading-normal">
-                  <p>Cloud Hybrid utilizes the Gemini Pro model server cluster securely. Thoughts are translated without any local device CPU strain.</p>
-                  <p className="font-mono text-[9px] text-[#d88c6e] font-semibold tracking-wide">PROXIED • END-TO-END SECURED</p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Right Column: Style, Tone & Sliders */}
-          <div className="bg-white border border-[#ebdccb] rounded-2xl p-4 flex flex-col justify-between gap-4 shadow-3xs">
-            
-            {/* Tone Profile */}
-            <div id="tone-ui-matrix" className="flex flex-col gap-2">
-              <label className="text-xs font-mono font-bold uppercase tracking-wider text-neutral-500">
-                Tone Profile
-              </label>
-              <div className="grid grid-cols-2 gap-2 text-xs font-medium">
-                {(["Professional", "Casual", "Academic", "Creative"] as Tone[]).map((t) => (
-                  <button
-                    key={t}
-                    id={`tone-select-${t.toLowerCase()}`}
-                    onClick={() => {
-                      playClick("click");
-                      setTone(t);
-                    }}
-                    className={`py-2 px-1 text-center rounded-lg border transition-all flex flex-col justify-center items-center gap-1 cursor-pointer ${
-                      tone === t
-                        ? "bg-[#d88c6e]/10 text-neutral-800 border-[#d88c6e] font-bold"
-                        : "bg-white text-gray-500 border-[#ebdccb] hover:bg-[#fafafc]"
-                    }`}
-                  >
-                    <span className="text-[11.5px] font-display">{t}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Choose a Tool */}
-            <div id="utility-ui-dropdown" className="flex flex-col gap-2">
-              <label className="text-xs font-mono font-bold uppercase tracking-wider text-[#d88c6e] flex items-center justify-between">
-                <span>Linguistic Tool Macro</span>
-                {utility !== "none" && <span className="text-[9px] bg-[#d88c6e]/10 text-[#d88c6e] px-1.5 py-0.2 rounded font-mono">ENGAGED</span>}
-              </label>
-              <div className="relative">
-                <select
-                  id="utility-select-menu"
-                  value={utility}
-                  onChange={(e) => {
-                    playClick("click");
-                    setUtility(e.target.value as any);
-                  }}
-                  className="w-full p-2.5 bg-white border border-[#ebdccb] rounded-lg text-xs font-display font-semibold text-[#1d1d1f] focus:outline-none focus:border-[#d88c6e] appearance-none cursor-pointer pr-10 border-neutral-300"
-                >
-                  <option id="macro-option-none" value="none">-- Select Optional Tool Macro --</option>
-                  {UTILITY_MACROS.map((macro) => (
-                    <option
-                      key={macro.name}
-                      id={`macro-option-${macro.name.toLowerCase().replace(/\s+/g, "-")}`}
-                      value={macro.name}
-                    >
-                      {macro.icon} {macro.name}
-                    </option>
-                  ))}
-                </select>
-                <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-gray-400">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
-                  </svg>
-                </div>
-              </div>
-            </div>
-
-            {/* Length Scale Slider */}
-            <div id="length-ui-slider" className="flex flex-col gap-2 pt-1 border-t border-[#ebdccb]/30">
-              <div className="flex items-center justify-between select-none">
-                <label className="text-xs font-mono font-bold uppercase tracking-wider text-neutral-500">
-                  Length Scale
-                </label>
-                <span className="text-xs font-mono font-bold text-[#d88c6e]">
-                  {length > 0 ? `+${length}` : length}
-                </span>
-              </div>
-              
-              <input
-                id="length-slider-range"
-                type="range"
-                min="-10"
-                max="10"
-                step="1"
-                value={length}
-                onChange={(e) => {
-                  setLength(Number(e.target.value));
-                }}
-                className="w-full h-1.5 bg-neutral-200 rounded-lg cursor-pointer accent-[#d88c6e]"
-              />
-              <div className="flex justify-between text-[9px] font-mono text-neutral-440 select-none uppercase tracking-wider">
-                <span className={length < 0 ? "text-[#d88c6e] font-semibold" : ""}>-10 Dry strip</span>
-                <span className={length === 0 ? "text-[#d88c6e] font-semibold" : ""}>0 Equal</span>
-                <span className={length > 0 ? "text-[#d88c6e] font-semibold" : ""}>+10 Expand</span>
-              </div>
-            </div>
-
-          </div>
-
-        </div>
-
-        {/* Big Prominent Action Button */}
-        <div className="bg-[#fdfbfc] border border-[#ebdccb] rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm select-none mt-2">
-          <div className="text-left font-sans space-y-0.5">
-            <span className="text-[10px] font-mono uppercase font-bold text-neutral-400 tracking-wider">Selected Routine:</span>
-            <p className="text-xs text-neutral-750 font-medium">
-              Oliver will transform notes inside <span className="font-bold text-[#d88c6e]">{tone} preset</span>
-              {utility !== "none" ? (<span> wearing <span className="font-bold text-[#d88c6e]">{utility} option</span></span>) : ""}.
-            </p>
-          </div>
-
-          <button
-            id="oli-transform-trigger-btn-settings"
-            disabled={isProcessing}
-            onClick={runOliTransform}
-            className={`h-11 px-8 rounded-xl font-display font-bold text-xs transition-all shadow-md active:scale-97 flex items-center justify-center gap-2 cursor-pointer w-full sm:w-auto relative overflow-hidden ${
-              isProcessing
-                ? "bg-neutral-100 text-neutral-400 border border-[#ebdccb] cursor-not-allowed"
-                : "bg-[#d88c6e] text-white border border-[#d88c6e] hover:bg-[#c37c5f]"
-            } ${rippleActive ? "animate-gold-ripple" : ""}`}
-          >
-            {isProcessing ? (
-              <>
-                <div className="w-4 h-4 border-2 border-neutral-400 border-t-transparent rounded-full animate-spin"></div>
-                <span className="font-mono text-[9px] uppercase font-bold tracking-widest">TRANSLATING CHAOS...</span>
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-4 h-4 text-orange-200 shrink-0" />
-                <span className="font-extrabold text-xs tracking-wider uppercase">✨ Ask Oli to Transform ✨</span>
-              </>
-            )}
-          </button>
-        </div>
-
-      </div>
-    )}
 
       </main>
 
@@ -2217,17 +1763,17 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
         >
           <div
             id="cozy-settings-card"
-            className="w-full max-w-sm bg-[#faf6f0] h-full shadow-2xl flex flex-col p-6 relative border-l border-[#ebdccb] animate-slide-left"
+            className="w-full max-w-sm bg-white dark:bg-stone-900 h-full shadow-2xl flex flex-col p-6 relative border-l border-neutral-200 dark:border-neutral-700 animate-slide-left"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Drawer Header */}
-            <div className="flex items-center justify-between border-b border-[#ebdccb] pb-4 mb-5 select-none animate-fade-in">
+            <div className="flex items-center justify-between border-b border-neutral-200 dark:border-neutral-700 pb-4 mb-5 select-none animate-fade-in">
               <div className="flex items-center gap-2">
-                <svg viewBox="0 0 24 24" className="w-5 h-5 text-[#d88c6e]" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <svg viewBox="0 0 24 24" className="w-5 h-5 text-[#d4af37] dark:text-[#b5942b]" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                   <circle cx="12" cy="12" r="3" />
                 </svg>
-                <h3 className="font-display font-semibold text-base text-neutral-800">
+                <h3 className="font-display font-semibold text-base text-stone-950 dark:text-stone-100">
                   Control Parameters
                 </h3>
               </div>
@@ -2237,7 +1783,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                   playClick("click");
                   setShowSettingsDrawer(false);
                 }}
-                className="p-1.5 rounded-lg hover:bg-[#eae1d4] text-gray-400 hover:text-black transition-colors"
+                className="p-1.5 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 text-gray-400 hover:text-black transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -2246,212 +1792,101 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
             {/* Drawer Body Scroll Content */}
             <div className="flex-1 overflow-y-auto flex flex-col gap-6 select-text">
               
-              {/* Dual-Engine Core Selection Grid */}
-              <div id="dual-engine-status-block" className="flex flex-col gap-2">
-                <label className="text-xs font-mono font-bold uppercase tracking-wider text-neutral-500 flex items-center justify-between">
-                  <span>Transformation Core</span>
-                  {engineMode === "native" && <span className="text-[10px] text-green-600 bg-green-50 px-1.5 py-0.5 rounded border border-green-200 uppercase font-bold tracking-normal animate-pulse">ACTIVE CORES</span>}
+              {/* Local Transformation Engine Selection Buttons */}
+              <div id="local-transformation-engine-block" className="flex flex-col gap-3">
+                <label className="text-xs font-mono font-bold uppercase tracking-wider text-neutral-500">
+                  Select Local Transformation Engine
                 </label>
                 
-                <div className="grid grid-cols-3 bg-[#eae1d5]/45 p-1 rounded-xl text-[10px] font-mono border border-[#ebdccb] gap-1 select-none">
-                  <button
-                    id="engine-native-btn"
-                    onClick={() => {
+                <div className="relative">
+                  <select
+                    id="local-engine-selector"
+                    value={selectedLlmModel}
+                    onChange={async (e) => {
                       playClick("click");
-                      setEngineMode("native");
-                      showToast("Connected to system native hardware coprocessor.", "info");
+                      const newModelId = e.target.value;
+                      setSelectedLlmModel(newModelId);
+                      setLocalLlmStatus("idle");
+                      setUseActualLlm(false);
+                      const { setActiveModelId } = await import("./utils/webLlmEngine");
+                      setActiveModelId(newModelId);
+                      showToast(`Switched to active model profile. Click 'Prepare Weights' to load.`, "info");
                     }}
-                    className={`py-2 px-1 rounded-lg text-center transition-all cursor-pointer relative ${
-                      engineMode === "native"
-                        ? "bg-white text-[#d88c6e] font-bold shadow-xs border border-[#ebdccb]/30"
-                        : "text-neutral-500 hover:text-neutral-750"
-                    }`}
-                    title="Path A: Direct binding to Google AICore or on-device local intelligence API"
+                    className="w-full p-2.5 bg-white dark:bg-stone-800 border border-neutral-200 dark:border-neutral-700 rounded-xl text-xs font-display font-bold text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-1 focus:ring-[#d4af37] dark:focus:ring-[#b5942b] focus:border-[#d4af37] dark:focus:border-[#b5942b] appearance-none cursor-pointer pr-10"
                   >
-                    System Native
-                    {hasNativeApi && (
-                      <span className="absolute top-0 right-0 w-2 h-2 rounded-full bg-green-500 border border-white"></span>
-                    )}
-                  </button>
-
-                  <button
-                    id="engine-sandbox-btn"
-                    onClick={() => {
-                      playClick("click");
-                      setEngineMode("sandbox");
-                      warmLocalLlm(false);
-                    }}
-                    className={`py-2 px-1 rounded-lg text-center transition-all cursor-pointer ${
-                      engineMode === "sandbox"
-                        ? "bg-white text-[#d88c6e] font-bold shadow-xs border border-[#ebdccb]/30"
-                        : "text-neutral-500 hover:text-neutral-750"
-                    }`}
-                    title="Path B: Runs model weights directly in your browser using WebGPU"
-                  >
-                    Local LLM
-                  </button>
-
-                  <button
-                    id="engine-cloud-btn"
-                    onClick={() => {
-                      playClick("click");
-                      if (!isOnline) {
-                        showToast("No active connection. Cloud hybrid mode requires network connectivity.", "error");
-                        return;
-                      }
-                      setEngineMode("cloud");
-                    }}
-                    className={`py-2 px-1 rounded-lg text-center transition-all cursor-pointer ${
-                      engineMode === "cloud"
-                        ? "bg-white text-[#d88c6e] font-bold shadow-xs border border-[#ebdccb]/30"
-                        : "text-neutral-500 hover:text-neutral-750"
-                    }`}
-                    title="Path C: Real-time Gemini 2.0 Web APIs for deep contextual summaries"
-                  >
-                    Cloud Hybrid
-                  </button>
+                    {SUPPORTED_MODELS.map(model => (
+                      <option key={model.id} value={model.id}>{model.name}</option>
+                    ))}
+                  </select>
+                  <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-gray-400">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
                 </div>
 
-                {/* Auxiliary Dynamic Core Status Block */}
-                <div id="engine-core-dynamic-status" className="p-3 bg-[#fdfbf6] rounded-xl border border-[#ebdccb] font-sans text-xs text-neutral-600 animate-fade-in select-none">
-                  <div className="flex items-center justify-between mb-1 text-[10px] font-mono font-bold uppercase tracking-wider text-neutral-500">
-                    <span>Active Cores Status</span>
-                    <span className={
-                      engineMode === "native" ? (hasNativeApi ? "text-green-600" : "text-red-500") :
-                      engineMode === "sandbox" ? (localLlmStatus === "ready" ? "text-green-600" : "text-orange-500") :
-                      "text-blue-500"
-                    }>
-                      {engineMode === "native" ? (hasNativeApi ? "DEVICE NATIVE BOUND" : "DEVICE NATIVE UNAVAILABLE") :
-                       engineMode === "sandbox" ? (localLlmStatus === "ready" ? "CACHE LOADED" : "UNPREPARED") :
-                       "HYBRID HIGH SPEED"}
+                {/* Performance Insights Area */}
+                <div id="local-engine-performance-insights" className="p-3 bg-stone-50 rounded-xl border border-neutral-200 text-xs text-neutral-600 animate-fade-in">
+                  <p className="font-mono text-[10px] font-bold text-neutral-500 uppercase tracking-wide mb-1">Engine Performance Insights:</p>
+                  <p className="font-sans leading-relaxed text-[11px] text-stone-700 font-medium">
+                    {SUPPORTED_MODELS.find(m => m.id === selectedLlmModel)?.recommended}
+                  </p>
+                </div>
+
+                <div id="local-engine-status-block" className="p-3 bg-white rounded-xl border border-neutral-200 text-xs text-neutral-600 space-y-2 animate-fade-in">
+                  <div className="flex items-center justify-between font-mono text-[10px] font-bold border-t border-neutral-200 pt-2">
+                    <span>WebGPU Engine Profile:</span>
+                    <span className={localLlmStatus === "ready" ? "text-green-600" : localLlmStatus === "loading" ? "text-sky-600 animate-pulse" : "text-sky-600"}>
+                      {localLlmStatus === "ready" ? "ACTIVE & CACHED" : localLlmStatus === "loading" ? "DOWNLOADING WEIGHTS" : "NOT READY (COAX TO WARM)"}
                     </span>
                   </div>
 
-                  {engineMode === "native" && (
-                    <div className="space-y-1.5 mt-1 text-[11px] leading-relaxed text-neutral-500">
-                      <p>NoteOli targets physical on-device neural hardware using standard Google AICore interfaces.</p>
-                      <p className="text-[#d88c6e] font-medium text-[11px] leading-normal bg-orange-50/40 p-2 rounded-lg border border-[#ebdccb]/30">
-                        Hardware-accelerated processing via your device OS. Zero storage impact, but unavailable on older hardware.
-                      </p>
-                      <p className="font-mono text-[9px] text-neutral-450">STATUS: {hasNativeApi ? "🟢 AICore detected & ready for hot-swapping" : "🔴 Genuine system native core unavailable (window.ai not detected)"}</p>
+                  {localLlmStatus === "loading" && (
+                    <div className="space-y-1.5 mt-2">
+                      <div className="w-full bg-neutral-100 h-1.5 rounded-full overflow-hidden border border-neutral-200">
+                        <div className="h-full bg-[#d4af37] transition-all duration-300" style={{ width: `${llmProgress * 100}%` }}></div>
+                      </div>
+                      <p className="text-[10px] text-sky-700 font-mono animate-pulse">{llmProgressMsg}</p>
                     </div>
                   )}
 
-                  {engineMode === "sandbox" && (
-                    <div className="space-y-1.5 mt-1 text-[11px] leading-relaxed text-neutral-500">
-                      <p>Runs model weights directly in your browser using WebGPU. Processes your data locally with zero cloud server communication.</p>
-                      
-                      <div className="text-[#d88c6e] font-medium text-[11px] leading-normal bg-orange-50/40 p-2 rounded-lg border border-[#ebdccb]/30">
-                        {selectedLlmModel === "gemma-2-2b-it-q4f16_1-MLC" ? (
-                          "Best for local chat and complex restructuring. High memory usage; may cause WebGPU resets on older mobile devices."
-                        ) : (
-                          "Best for quick note cleanups. Low memory footprint, but prone to personality drift in deep conversations."
-                        )}
-                      </div>
-                      
-                      {/* Interactive Model Size Selector */}
-                      <div className="flex flex-col gap-1 mt-1.5 pb-2 border-b border-[#ebdccb]/40">
-                        <label className="text-[10px] font-mono font-bold text-neutral-500 uppercase tracking-wide">
-                          Model Size & VRAM Profile:
-                        </label>
-                        <div className="relative">
-                          <select
-                            id="model-profile-selector"
-                            value={selectedLlmModel}
-                            disabled={localLlmStatus === "loading"}
-                            onChange={async (e) => {
-                              playClick("click");
-                              const newModelId = e.target.value;
-                              setSelectedLlmModel(newModelId);
-                              setLocalLlmStatus("idle");
-                              setUseActualLlm(false);
-                              
-                              const { setActiveModelId } = await import("./utils/webLlmEngine");
-                              setActiveModelId(newModelId);
-                              showToast(`Switched active local model profile. Press 'prepare sandboxed weights' below to warm it up.`, "info");
-                            }}
-                            className="w-full p-2 bg-white border border-[#ebdccb] rounded-lg text-xs font-display font-medium text-[#1d1d1f] focus:outline-none focus:border-[#d88c6e] appearance-none cursor-pointer pr-10 animate-fade-in"
-                          >
-                            <option value="Qwen2.5-0.5B-Instruct-q4f16_1-MLC">⚡ Qwen 2.5 0.5B (Default / Ultra-Light, ~350MB VRAM)</option>
-                            <option value="gemma-2-2b-it-q4f16_1-MLC">🦁 Gemma 2 2B (Powerhouse, ~1.43GB VRAM)</option>
-                            <option value="SmolLM2-360M-Instruct-q4f16_1-MLC">🌸 SmolLM2 360M (Feather-Weight, ~240MB VRAM)</option>
-                          </select>
-                          <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none text-gray-400">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
-                            </svg>
-                          </div>
-                        </div>
-                        <p className="text-[9px] text-[#d88c6e] leading-snug mt-0.5">
-                          {selectedLlmModel === "gemma-2-2b-it-q4f16_1-MLC" && "💡 Gemma 2 2B is highly capable. Best suited for high-spec laptops/desktops."}
-                          {selectedLlmModel === "Qwen2.5-0.5B-Instruct-q4f16_1-MLC" && "💡 Qwen 2.5 0.5B loads quickly and runs flawlessly on mobile and low-VRAM configurations."}
-                          {selectedLlmModel === "SmolLM2-360M-Instruct-q4f16_1-MLC" && "💡 SmolLM2 is feather-weight and loads almost instantly with minimal footprint."}
-                        </p>
-                      </div>
-                      
-                      <div className="flex items-center justify-between font-mono text-[10px] font-bold mt-1">
-                        <span>WebGPU Coprocessor weights:</span>
-                        <span className={localLlmStatus === "ready" ? "text-green-600" : "text-amber-600 animate-pulse"}>
-                          {localLlmStatus === "ready" ? "LOADED" : localLlmStatus === "loading" ? "DOWNLOADING" : "IDLE / STALE"}
-                        </span>
-                      </div>
-
-                      {localLlmStatus === "loading" && (
-                        <div className="w-full bg-neutral-200 h-1.5 rounded-full overflow-hidden mt-1">
-                          <div className="h-full bg-[#d88c6e] transition-all duration-300" style={{ width: `${llmProgress * 100}%` }}></div>
-                        </div>
-                      )}
-
-                      {localLlmStatus === "loading" ? (
-                        <p className="text-[10px] text-orange-600 font-mono mt-1 animate-pulse">{llmProgressMsg}</p>
-                      ) : localLlmStatus === "ready" ? (
-                        <div className="flex flex-col gap-1.5 mt-2">
-                          <p className="text-[10px] text-neutral-400">Lock cached: {selectedLlmModel} (4-bit quantized)</p>
-                          <button
-                            id="unload-weights-btn"
-                            type="button"
-                            onClick={async () => {
-                              playClick("click");
-                              try {
-                                const { unloadWebLlmEngine } = await import("./utils/webLlmEngine");
-                                await unloadWebLlmEngine();
-                                setLocalLlmStatus("idle");
-                                setUseActualLlm(false);
-                                showToast("Weights unloaded cleans properly. GPU memory released.", "success");
-                              } catch (err: any) {
-                                 showToast("Failed to unload weights correctly.", "error");
-                              }
-                            }}
-                            className="w-full py-1 bg-red-50 hover:bg-red-100 text-red-700 rounded-lg text-[9px] font-mono uppercase font-bold tracking-wider transition-colors cursor-pointer border border-red-200 text-center"
-                          >
-                            Unload Local Weights
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          id="prep-sandbox-btn"
-                          type="button"
-                          onClick={() => {
-                            playClick("click");
-                            warmLocalLlm(true);
-                          }}
-                          className="w-full mt-1.5 py-1.5 bg-[#d88c6e]/10 hover:bg-[#d88c6e]/20 text-[#d88c6e] border border-[#d88c6e]/30 rounded-lg text-[10px] font-mono lowercase font-semibold transition-colors cursor-pointer text-center"
-                        >
-                          prepare local 4-bit weights
-                        </button>
-                      )}
-                    </div>
-                  )}
-
-                  {engineMode === "cloud" && (
-                    <div className="space-y-1.5 mt-1 text-[11px] leading-relaxed text-neutral-500">
-                      <p>Cloud Hybrid harnesses Gemini Pro models on the server. Your raw thoughts are sent securely via proxy to output formatted text.</p>
-                      <p className="text-[#d88c6e] font-medium text-[11px] leading-normal bg-orange-50/40 p-2 rounded-lg border border-[#ebdccb]/30">
-                        Maximum reasoning power and zero memory crash risk. Requires an active internet connection.
-                      </p>
-                      <p className="font-mono text-[9px] text-[#d88c6e]">PROXIED • END-TO-END SECURITIES ENGAGED</p>
-                    </div>
-                  )}
+                  <div className="pt-1 select-none">
+                    {localLlmStatus === "ready" ? (
+                      <button
+                        id="unload-weights-btn"
+                        type="button"
+                        onClick={async () => {
+                          playClick("click");
+                          try {
+                            const { unloadWebLlmEngine } = await import("./utils/webLlmEngine");
+                            await unloadWebLlmEngine();
+                            setLocalLlmStatus("idle");
+                            setUseActualLlm(false);
+                            showToast("Active weights unloaded cleanly. GPU memory released.", "success");
+                          } catch (err: any) {
+                             showToast("Failed to unload weights correctly.", "error");
+                          }
+                        }}
+                        className="w-full py-2 bg-red-50 hover:bg-red-100 text-red-700 rounded-xl text-[10px] font-mono uppercase font-bold tracking-wider transition-colors cursor-pointer border border-red-200 text-center"
+                      >
+                        Unload GPU Weights
+                      </button>
+                    ) : localLlmStatus === "loading" ? (
+                      <div className="text-center text-[10px] font-mono text-neutral-450 uppercase py-1 animate-pulse">Refining Local Context...</div>
+                    ) : (
+                      <button
+                        id="prep-sandbox-btn"
+                        type="button"
+                        onClick={() => {
+                          playClick("click");
+                          warmLocalLlm(true);
+                        }}
+                        className="w-full py-2 bg-sky-50 dark:bg-sky-950 hover:bg-sky-100 dark:hover:bg-sky-900 text-sky-700 dark:text-sky-400 border border-sky-200 dark:border-sky-800 rounded-xl text-[10px] font-mono lowercase font-bold transition-colors cursor-pointer text-center"
+                      >
+                        prepare local 4-bit weights
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -2471,8 +1906,8 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                       }}
                       className={`py-2 px-1 text-center rounded-lg border transition-all flex flex-col justify-center items-center gap-1.5 ${
                         tone === t
-                          ? "bg-[#d88c6e]/10 text-neutral-800 border-[#d88c6e] font-semibold"
-                          : "bg-white text-gray-500 border-[#ebdccb] hover:bg-[#fafafc] hover:border-gray-300"
+                          ? "bg-[#d4af37]/10 dark:bg-[#b5942b]/20 text-stone-900 dark:text-stone-100 border-[#d4af37] dark:border-[#b5942b] font-semibold"
+                          : "bg-white dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400 border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-700 hover:border-neutral-300 dark:hover:border-neutral-600"
                       }`}
                     >
                       <span className="text-[11px] leading-none font-display">{t}</span>
@@ -2494,7 +1929,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                       playClick("click");
                       setUtility(e.target.value as any);
                     }}
-                    className="w-full p-2 bg-white border border-[#ebdccb] rounded-lg text-xs font-display font-semibold text-[#1d1d1f] focus:outline-none focus:border-[#d88c6e] appearance-none cursor-pointer pr-10 animate-fade-in"
+                    className="w-full p-2 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg text-xs font-display font-semibold text-stone-950 dark:text-stone-100 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-[#d4af37] dark:focus:ring-[#b5942b] focus:border-[#d4af37] dark:focus:border-[#b5942b] appearance-none cursor-pointer pr-10 animate-fade-in"
                   >
                     <option id="macro-option-none" value="none">-- Optional: Choose a Tool --</option>
                     {UTILITY_MACROS.map((macro) => (
@@ -2523,7 +1958,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                   <label className="text-xs font-mono font-bold uppercase tracking-wider text-neutral-500">
                     Length / Intent Scale
                   </label>
-                  <span className={`text-xs font-mono font-bold text-[#d88c6e]`}>
+                  <span className={`text-xs font-mono font-bold text-[#d4af37] dark:text-[#b5942b]`}>
                     {length > 0 ? `+${length}` : length}
                   </span>
                 </div>
@@ -2538,13 +1973,13 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                   onChange={(e) => {
                     setLength(Number(e.target.value));
                   }}
-                  className="w-full h-1.5 bg-neutral-200 rounded-lg cursor-pointer accent-[#d88c6e] py-1"
+                  className="w-full h-1.5 bg-neutral-200 dark:bg-neutral-700 rounded-lg cursor-pointer accent-[#d4af37] dark:accent-[#b5942b] py-1"
                 />
                 
                 <div id="length-slider-description" className="flex justify-between text-[9px] font-mono text-gray-400 mt-1 uppercase leading-snug font-semibold select-none">
-                  <span className={length < 0 ? "text-[#d88c6e]" : ""}>-10 Stripping</span>
-                  <span className={length === 0 ? "text-[#d88c6e]" : ""}>0 Equal</span>
-                  <span className={length > 0 ? "text-[#d88c6e]" : ""}>+10 Intent</span>
+                  <span className={length < 0 ? "text-[#d4af37] dark:text-[#b5942b]" : ""}>-10 Stripping</span>
+                  <span className={length === 0 ? "text-[#d4af37] dark:text-[#b5942b]" : ""}>0 Equal</span>
+                  <span className={length > 0 ? "text-[#d4af37] dark:text-[#b5942b]" : ""}>+10 Intent</span>
                 </div>
               </div>
 
@@ -2557,13 +1992,13 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
       {showHistoryDrawer && (
         <div id="archive-history-overlay" className="fixed inset-0 bg-neutral-900/35 backdrop-blur-xs z-50 flex justify-end transition-opacity">
           
-          <div id="archive-drawer-card" className="w-full max-w-sm bg-[#faf6f0] h-full shadow-2xl flex flex-col p-6 relative border-l border-[#ebdccb] animate-slide-left">
+          <div id="archive-drawer-card" className="w-full max-w-sm bg-white dark:bg-stone-900 h-full shadow-2xl flex flex-col p-6 relative border-l border-neutral-200 dark:border-neutral-700 animate-slide-left">
             
             {/* Header of Drawer */}
-            <div className="flex items-center justify-between border-b border-[#ebdccb] pb-4 mb-4 select-none">
+            <div className="flex items-center justify-between border-b border-neutral-200 dark:border-neutral-700 pb-4 mb-4 select-none">
               <div className="flex items-center gap-2">
-                <BookOpen className="w-5 h-5 text-[#d88c6e]" />
-                <h3 className="font-display font-semibold text-base text-neutral-800">
+                <BookOpen className="w-5 h-5 text-[#d4af37] dark:text-[#b5942b]" />
+                <h3 className="font-display font-semibold text-base text-stone-950 dark:text-stone-100">
                   Archived Note Logs
                 </h3>
               </div>
@@ -2573,7 +2008,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                   playClick("click");
                   setShowHistoryDrawer(false);
                 }}
-                className="p-1.5 rounded-lg hover:bg-[#eae1d4] text-gray-400 hover:text-black transition-colors"
+                className="p-1.5 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 text-gray-400 hover:text-black transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -2587,7 +2022,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                 value={searchHistoryQuery}
                 onChange={(e) => setSearchHistoryQuery(e.target.value)}
                 placeholder="Search raw context and titles..."
-                className="w-full pl-3 pr-10 py-1.5 border border-[#ebdccb] rounded-lg text-xs bg-[#fdfbf7] focus:bg-white focus:outline-none focus:border-[#d88c6e] font-sans"
+                className="w-full pl-3 pr-10 py-1.5 border border-neutral-200 dark:border-neutral-700 rounded-lg text-xs bg-neutral-50 dark:bg-neutral-800 focus:bg-white dark:focus:bg-neutral-700 focus:outline-none focus:ring-1 focus:ring-[#d4af37] dark:focus:ring-[#b5942b] focus:border-[#d4af37] dark:focus:border-[#b5942b] font-sans dark:text-neutral-100 placeholder:text-neutral-400"
               />
               {searchHistoryQuery && (
                 <button
@@ -2608,7 +2043,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                   <button
                     id="populate-drawer-sample-btn"
                     onClick={injectSample}
-                    className="text-[11px] font-mono text-[#d88c6e] underline"
+                    className="text-[11px] font-mono text-[#d4af37] dark:text-[#b5942b] underline"
                   >
                     Load dynamic notes preview
                   </button>
@@ -2621,12 +2056,12 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
                     onClick={() => loadHistoricNote(note)}
                     className={`block p-4 rounded-lg border text-left cursor-pointer transition-all ${
                       activeHistoryNoteId === note.id
-                        ? "bg-[#d88c6e]/5 border-[#d88c6e] shadow-xs"
-                        : "bg-white border-[#ebdccb] hover:border-neutral-400"
+                        ? "bg-[#d4af37]/5 dark:bg-[#b5942b]/10 border-[#d4af37] dark:border-[#b5942b] shadow-xs"
+                        : "bg-white dark:bg-neutral-800 border-neutral-200 dark:border-neutral-700 hover:border-neutral-400 dark:hover:border-neutral-500"
                     }`}
                   >
                     <div className="flex items-start justify-between gap-2 mb-1">
-                      <h4 className="font-semibold text-xs text-[#1d1d1f] line-clamp-1 leading-snug font-display">
+                      <h4 className="font-semibold text-xs text-stone-950 dark:text-stone-100 line-clamp-1 leading-snug font-display">
                         {note.title}
                       </h4>
                       <button
@@ -2655,7 +2090,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
             </div>
 
             {/* Bottom actions for Drawer logs */}
-            <div className="border-t border-[#ebdccb] pt-4 mt-4 flex items-center justify-between text-xs font-mono text-zinc-400 select-none">
+            <div className="border-t border-neutral-200 dark:border-neutral-700 pt-4 mt-4 flex items-center justify-between text-xs font-mono text-zinc-400 select-none">
               <span>Total Logs: {notesHistory.length} items</span>
               {notesHistory.length > 0 && (
                 <button
@@ -2682,7 +2117,7 @@ Active Mindset: ${mindset}. Follow user instruction carefully. Apply utility mac
       )}
 
       {/* Styled clean layout stationery footer */}
-      <footer id="noteoli-footer" className="bg-[#faf6f0] border-t border-[#ebdccb]/45 px-6 py-2 text-center mt-auto text-[9px] font-mono text-zinc-400 tracking-wider select-none shrink-0">
+      <footer id="noteoli-footer" className="bg-white dark:bg-stone-900 border-t border-neutral-200 dark:border-neutral-700 px-6 py-2 text-center mt-auto text-[9px] font-mono text-zinc-400 dark:text-zinc-500 tracking-wider select-none shrink-0">
         <span>PROJECT NOTEOLI. OPTIMIZED TEXT TRANSLATION. </span>
         <span className="hidden sm:inline">• LOCAL GPU GEMMA-2B & SECURE CLOUD HYBRID CORES.</span>
       </footer>
