@@ -1,5 +1,5 @@
 # Automated workflow to compile NoteOli and deploy to GitHub Pages without a terminal
-name: Deploy NoteOli to GitHub Pages
+name: Deploy NoteOli V1 to GitHub Pages
 
 on:
   push:
