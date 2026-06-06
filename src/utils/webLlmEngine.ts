@@ -19,22 +19,46 @@ export interface WebLlmModelMetadata {
 
 export const SUPPORTED_MODELS: WebLlmModelMetadata[] = [
   {
+    id: "SmolLM2-360M-Instruct-q4f16_1-MLC",
+    name: "SmolLM2 (1.7B)",
+    size: "~240 MB",
+    recommended: "Ultra-lightweight speedster. Lowest memory usage, highly stable on mobile. Best for basic text formatting. Pro-tip: Prone to personality drift in long chats."
+  },
+  {
     id: "Qwen2.5-0.5B-Instruct-q4f16_1-MLC",
-    name: "Qwen 2.5 0.5B (Default / Ultra-Light)",
+    name: "Qwen 2.5 (1.5B)",
     size: "~350 MB",
-    recommended: "Highly recommended. Flawless on active integrated graphics, mobile viewports, and low-spec systems."
+    recommended: "Compact text cleaner. Rapid local grammar fixes. Prone to losing character if pushed with abstract dialogue."
+  },
+  {
+    id: "Phi-3.5-mini-instruct-q4f16_1-MLC",
+    name: "Phi-3.5 (3.8B)",
+    size: "~1.5 GB",
+    recommended: "Intelligent local brain. Exceptional logical reasoning for restructuring raw thoughts. Balanced memory usage."
+  },
+  {
+    id: "Llama-3-8B-Instruct-q4f16_1-MLC",
+    name: "Llama 3 (3B)",
+    size: "~2.5 GB",
+    recommended: "Strong persona adherence. Keeps Oliver's witty, proud companion tone perfectly alive in chat. Standard VRAM consumption."
+  },
+  {
+    id: "Qwen2.5-3B-Instruct-q4f16_1-MLC",
+    name: "Qwen 2.5 (3B)",
+    size: "~2.0 GB",
+    recommended: "The structural sweet spot. Excellent at organizing chaotic outlines into neat task blocks. High VRAM footprint."
   },
   {
     id: "gemma-2-2b-it-q4f16_1-MLC",
-    name: "Gemma 2 2B (Powerhouse)",
+    name: "Gemma 2 (2B)",
     size: "~1.43 GB",
-    recommended: "Requires a dedicated GPU with >4GB memory headroom; high-quality reasoning."
+    recommended: "Highly tuned creative core. Deep vocabulary and excellent persona stability. Heavy memory demand."
   },
   {
-    id: "SmolLM2-360M-Instruct-q4f16_1-MLC",
-    name: "SmolLM2 360M (Feather-Weight)",
-    size: "~240 MB",
-    recommended: "Requires minimal resources; extremely fast loading and execution on any WebGPU device."
+    id: "Mistral-7B-Instruct-v0.3-q4f16_1-MLC",
+    name: "Mistral (7B)",
+    size: "~4.0 GB",
+    recommended: "Maximum conceptual muscle. Brilliant reasoning depth. Critical Warning: High risk of WebGPU memory reset on standard mobile web browsers."
   }
 ];
 
@@ -158,7 +182,7 @@ export async function initializeWebLlmEngine(
         errMsg.includes("exhausted") ||
         errMsg.includes("limit exceeded")
       ) {
-        throw new Error(`Device lost/Memory limit errored during compile. Try choosing a lighter model: Qwen 2.5 0.5B or SmolLM2 360M.`);
+        throw new Error(`Device lost/Memory limit errored during compile. Try choosing a lighter tier like Tier 1 or Tier 2.`);
       }
       throw err;
     } finally {
@@ -306,7 +330,7 @@ CRITICAL EXECUTION RULES:
       errMsg.includes("exhausted") ||
       errMsg.includes("limit exceeded")
     ) {
-      throw new Error(`Device memory limit exceeded or WebGPU device lost. NoteOli has unloaded weights to recover the browser-side WebGPU context. Please check your browser's WebGPU support or choose a lighter model: Qwen 2.5 0.5B or SmolLM2 360M.`);
+      throw new Error(`Device memory limit exceeded or WebGPU device lost. NoteOli has unloaded weights to recover the browser-side WebGPU context. Please check your browser's WebGPU support or choose a lighter tier like Tier 1 or Tier 2.`);
     }
     throw err;
   }
@@ -399,7 +423,7 @@ Be helpful, friendly, and direct. Keep formatting neat and cozy.`;
       errMsg.includes("exhausted") ||
       errMsg.includes("limit exceeded")
     ) {
-      throw new Error(`Device memory limit exceeded or WebGPU device lost. NoteOli has unloaded weights to recover the browser-side WebGPU context. Please check your browser's WebGPU support or choose a lighter model: Qwen 2.5 0.5B or SmolLM2 360M.`);
+      throw new Error(`Device memory limit exceeded or WebGPU device lost. NoteOli has unloaded weights to recover the browser-side WebGPU context. Please check your browser's WebGPU support or choose a lighter tier like Tier 1 or Tier 2.`);
     }
     throw err;
   }
